@@ -1,6 +1,7 @@
 #ifndef ENGINE_HPP
 #define ENGINE_HPP
 
+#include "engine/api/isochrone_parameters.hpp"
 #include "engine/api/match_parameters.hpp"
 #include "engine/api/nearest_parameters.hpp"
 #include "engine/api/route_parameters.hpp"
@@ -14,6 +15,7 @@
 #include "engine/plugins/nearest.hpp"
 #include "engine/plugins/table.hpp"
 #include "engine/plugins/tile.hpp"
+#include "engine/plugins/isochrone.hpp"
 #include "engine/plugins/trip.hpp"
 #include "engine/plugins/viaroute.hpp"
 #include "engine/routing_algorithms.hpp"
@@ -37,6 +39,7 @@ class EngineInterface
     virtual Status Trip(const api::TripParameters &parameters, api::ResultT &result) const = 0;
     virtual Status Match(const api::MatchParameters &parameters, api::ResultT &result) const = 0;
     virtual Status Tile(const api::TileParameters &parameters, api::ResultT &result) const = 0;
+    virtual Status Isochrone(const api::IsochroneParameters &parameters, api::ResultT &result) const = 0;
 };
 
 template <routing_algorithms::RoutingAlgorithm Algorithm>
@@ -107,6 +110,11 @@ class Engine final : public EngineInterface
     Status Tile(const api::TileParameters &params, api::ResultT &result) const override final
     { return tile_plugin.HandleRequest(GetAlgorithms(params), params, result); }
 
+    Status Isochrone(const api::IsochroneParameters &params, api::ResultT &result) const override final
+    {
+        return isochrone_plugin.HandleRequest(GetAlgorithms(params), params, result);
+    }
+
   private:
     template <typename ParametersT> auto GetAlgorithms(const ParametersT &params) const
     { return RoutingAlgorithms<Algorithm>{heaps, facade_provider->Get(params)}; }
@@ -119,6 +127,7 @@ class Engine final : public EngineInterface
     const plugins::TripPlugin trip_plugin;
     const plugins::MatchPlugin match_plugin;
     const plugins::TilePlugin tile_plugin;
+    const plugins::IsochronePlugin isochrone_plugin;
 };
 } // namespace osrm::engine
 
