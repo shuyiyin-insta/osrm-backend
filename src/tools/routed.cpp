@@ -187,6 +187,9 @@ inline unsigned generateServerProgramOptions(const int argc,
         ("max-nearest-locations",
          value<int>(&config.max_locations_nearest)->default_value(10),
          "Max. locations supported in nearest query") //
+        ("max-isochrone-range",
+         value<int>(&config.max_isochrone_range)->default_value(15 * 60),
+         "Max. range in seconds supported in isochrone query") //
         ("max-alternatives",
          value<int>(&config.max_alternatives)->default_value(3),
          "Max. number of alternatives supported in the MLD route query") //
