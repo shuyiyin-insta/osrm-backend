@@ -142,8 +142,6 @@ engine::Status OSRM::Isochrone(const engine::api::IsochroneParameters &params,
 }
 
 Status OSRM::Isochrone(const IsochroneParameters &params, engine::api::ResultT &result) const
-{
-    return engine_->Isochrone(params, result);
-}
+{ return engine_->Isochrone(params, result); }
 
 } // namespace osrm

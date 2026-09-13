@@ -284,7 +284,7 @@ BOOST_AUTO_TEST_CASE(applies_reverse_phantom_offsets_to_weight_and_duration_seed
     BOOST_CHECK_EQUAL(from_alias<int>(target->duration), 20);
 }
 
-BOOST_AUTO_TEST_CASE(rejects_a_partial_ch_core_instead_of_returning_incomplete_results)
+BOOST_AUTO_TEST_CASE(searches_the_uncontracted_core)
 {
     const SyntheticCHFacade facade{2,
                                    {{0, 1, EdgeWeight{1}, EdgeDuration{1}, true, false},
@@ -293,8 +293,38 @@ BOOST_AUTO_TEST_CASE(rejects_a_partial_ch_core_instead_of_returning_incomplete_r
     const auto result =
         phastOneToAllSearch(facade, {makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {10});
 
-    BOOST_CHECK(result.status == IsochroneSearchStatus::UnsupportedCHGraph);
-    BOOST_CHECK(result.nodes.empty());
+    BOOST_REQUIRE(result.isComplete());
+    const auto *first = findNode(result, 1);
+    const auto *reentry = findNode(result, 0);
+    BOOST_REQUIRE(first != nullptr);
+    BOOST_REQUIRE(reentry != nullptr);
+    BOOST_CHECK_EQUAL(first->weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(first->duration, EdgeDuration{1});
+    BOOST_CHECK_EQUAL(reentry->weight, EdgeWeight{2});
+    BOOST_CHECK_EQUAL(reentry->duration, EdgeDuration{2});
+}
+
+BOOST_AUTO_TEST_CASE(searches_logical_backward_arcs_within_the_retained_core)
+{
+    // Kahn's residual has no PHAST rank.  The backward arc stored at node 1 represents the
+    // logical core edge 2 -> 1, so a core Dijkstra must read it as an incoming arc of node 2.
+    const SyntheticCHFacade facade{4,
+                                   {{1, 2, EdgeWeight{1}, EdgeDuration{1}, false, true},
+                                    {1, 3, EdgeWeight{1}, EdgeDuration{1}, true, false},
+                                    {3, 1, EdgeWeight{1}, EdgeDuration{1}, true, false}}};
+
+    const auto result =
+        phastOneToAllSearch(facade, {makeSource(2, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {10});
+
+    BOOST_REQUIRE(result.isComplete());
+    const auto *first = findNode(result, 1);
+    const auto *second = findNode(result, 3);
+    BOOST_REQUIRE(first != nullptr);
+    BOOST_REQUIRE(second != nullptr);
+    BOOST_CHECK_EQUAL(first->weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(first->duration, EdgeDuration{1});
+    BOOST_CHECK_EQUAL(second->weight, EdgeWeight{2});
+    BOOST_CHECK_EQUAL(second->duration, EdgeDuration{2});
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -55,8 +55,8 @@ struct IsochroneParameters : public BaseParameters
     bool IsValid() const
     { return BaseParameters::IsValid() && coordinates.size() == 1 && range >= 1; }
 };
-}
-}
-}
+} // namespace api
+} // namespace engine
+} // namespace osrm
 
 #endif

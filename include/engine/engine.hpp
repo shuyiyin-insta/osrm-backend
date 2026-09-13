@@ -11,11 +11,11 @@
 #include "engine/concepts.hpp"
 #include "engine/datafacade_provider.hpp"
 #include "engine/engine_config.hpp"
+#include "engine/plugins/isochrone.hpp"
 #include "engine/plugins/match.hpp"
 #include "engine/plugins/nearest.hpp"
 #include "engine/plugins/table.hpp"
 #include "engine/plugins/tile.hpp"
-#include "engine/plugins/isochrone.hpp"
 #include "engine/plugins/trip.hpp"
 #include "engine/plugins/viaroute.hpp"
 #include "engine/routing_algorithms.hpp"
@@ -39,7 +39,8 @@ class EngineInterface
     virtual Status Trip(const api::TripParameters &parameters, api::ResultT &result) const = 0;
     virtual Status Match(const api::MatchParameters &parameters, api::ResultT &result) const = 0;
     virtual Status Tile(const api::TileParameters &parameters, api::ResultT &result) const = 0;
-    virtual Status Isochrone(const api::IsochroneParameters &parameters, api::ResultT &result) const = 0;
+    virtual Status Isochrone(const api::IsochroneParameters &parameters,
+                             api::ResultT &result) const = 0;
 };
 
 template <routing_algorithms::RoutingAlgorithm Algorithm>
@@ -111,10 +112,9 @@ class Engine final : public EngineInterface
     Status Tile(const api::TileParameters &params, api::ResultT &result) const override final
     { return tile_plugin.HandleRequest(GetAlgorithms(params), params, result); }
 
-    Status Isochrone(const api::IsochroneParameters &params, api::ResultT &result) const override final
-    {
-        return isochrone_plugin.HandleRequest(GetAlgorithms(params), params, result);
-    }
+    Status Isochrone(const api::IsochroneParameters &params,
+                     api::ResultT &result) const override final
+    { return isochrone_plugin.HandleRequest(GetAlgorithms(params), params, result); }
 
   private:
     template <typename ParametersT> auto GetAlgorithms(const ParametersT &params) const

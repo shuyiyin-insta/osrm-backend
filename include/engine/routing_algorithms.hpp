@@ -9,6 +9,7 @@
 #include "engine/routing_algorithms/direct_shortest_path.hpp"
 #include "engine/routing_algorithms/many_to_many.hpp"
 #include "engine/routing_algorithms/map_matching.hpp"
+#include "engine/routing_algorithms/reachability.hpp"
 #include "engine/routing_algorithms/shortest_path.hpp"
 #include "engine/routing_algorithms/tile_turns.hpp"
 
@@ -47,6 +48,10 @@ class RoutingAlgorithmsInterface
     virtual std::vector<routing_algorithms::TurnData>
     GetTileTurns(const std::vector<datafacade::BaseDataFacade::RTreeLeaf> &edges,
                  const std::vector<std::size_t> &sorted_edge_indexes) const = 0;
+
+    virtual routing_algorithms::ReachabilitySearchResult
+    IsochroneSearch(const PhantomNodeCandidates &source_candidates,
+                    EdgeDuration duration_cutoff) const = 0;
 
     virtual const DataFacadeBase &GetFacade() const = 0;
 
@@ -101,6 +106,10 @@ class RoutingAlgorithms final : public RoutingAlgorithmsInterface
     std::vector<routing_algorithms::TurnData>
     GetTileTurns(const std::vector<datafacade::BaseDataFacade::RTreeLeaf> &edges,
                  const std::vector<std::size_t> &sorted_edge_indexes) const final override;
+
+    routing_algorithms::ReachabilitySearchResult
+    IsochroneSearch(const PhantomNodeCandidates &source_candidates,
+                    EdgeDuration duration_cutoff) const final override;
 
     const DataFacadeBase &GetFacade() const final override { return *facade; }
 
@@ -211,6 +220,15 @@ inline std::vector<routing_algorithms::TurnData> RoutingAlgorithms<Algorithm>::G
     const std::vector<datafacade::BaseDataFacade::RTreeLeaf> &edges,
     const std::vector<std::size_t> &sorted_edge_indexes) const
 { return routing_algorithms::getTileTurns(*facade, edges, sorted_edge_indexes); }
+
+template <routing_algorithms::RoutingAlgorithm Algorithm>
+routing_algorithms::ReachabilitySearchResult
+RoutingAlgorithms<Algorithm>::IsochroneSearch(const PhantomNodeCandidates &source_candidates,
+                                              const EdgeDuration duration_cutoff) const
+{
+    return routing_algorithms::reachabilitySearch(
+        heaps, *facade, source_candidates, duration_cutoff);
+}
 
 } // namespace osrm::engine
 
