@@ -163,6 +163,9 @@ SearchResult makeNativeSearchResult(
         {
             if (!result.isComplete())
                 return;
+            const auto geometry = facade.GetGeometryIndex(label.node);
+            if (geometry.id == SPECIAL_GEOMETRYID)
+                return;
             const auto intersects = intersectsCutoff(facade, label, duration_cutoff, inbound);
             if (!intersects)
             {
@@ -170,11 +173,7 @@ SearchResult makeNativeSearchResult(
                 return;
             }
             if (*intersects)
-            {
-                const auto geometry = facade.GetGeometryIndex(label.node);
-                if (geometry.id != SPECIAL_GEOMETRYID)
-                    candidate_geometries.insert(geometry.id);
-            }
+                candidate_geometries.insert(geometry.id);
         });
     if (!result.isComplete())
         return result;

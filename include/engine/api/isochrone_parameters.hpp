@@ -61,9 +61,6 @@ struct IsochroneParameters : public BaseParameters
     std::optional<double> generalize = std::nullopt;
     std::optional<double> denoise = std::nullopt;
 
-    // Retained while the existing max_isochrone_range configuration is wired into the engine.
-    unsigned range = 15 * 60;
-
     bool operator==(const IsochroneParameters &) const = default;
 
     bool IsValid() const

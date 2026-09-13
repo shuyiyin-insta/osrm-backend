@@ -104,4 +104,19 @@ BOOST_AUTO_TEST_CASE(skips_native_labels_without_materializable_geometry)
     BOOST_CHECK_EQUAL(result.nodes.front().node, 0);
 }
 
+BOOST_AUTO_TEST_CASE(inbound_skips_native_labels_without_materializable_geometry)
+{
+    const NativeResultFacade facade;
+    osrm::engine::routing_algorithms::ReachabilitySearchResult native_result;
+    native_result.competitors.push_back({99, EdgeWeight{1}, EdgeDuration{1}});
+    native_result.competitors.push_back({0, EdgeWeight{10}, EdgeDuration{150}});
+
+    const auto result = osrm::engine::isochrone::makeNativeSearchResult(
+        facade, native_result, {}, EdgeDuration{60}, 10, true);
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 1);
+    BOOST_CHECK_EQUAL(result.nodes.front().node, 0);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
