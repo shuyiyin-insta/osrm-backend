@@ -22,7 +22,6 @@ inline const auto root_rule = x3::rule<struct isochrone_root_tag>{"isochrone_roo
     base_grammar::query_rule > format_rule >
     -('?' > (range_rule | base_grammar::base_options) % '&');
 
-
 } // namespace osrm::server::api::isochrone_grammar
 
 #endif

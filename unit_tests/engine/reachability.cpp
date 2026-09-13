@@ -104,8 +104,7 @@ class ReachabilityFacade final
 
     TurnPenalty GetDurationPenaltyForEdgeID(NodeID turn_id) const
     {
-        constexpr std::array<TurnPenalty, 7> penalties = {
-            {{1}, {98}, {0}, {0}, {0}, {0}, {0}}};
+        constexpr std::array<TurnPenalty, 7> penalties = {{{1}, {98}, {0}, {0}, {0}, {0}, {0}}};
         return penalties[turn_id];
     }
 
@@ -141,9 +140,10 @@ BOOST_AUTO_TEST_CASE(over_duration_lower_weight_labels_suppress_in_cutoff_compet
     SearchEngineData<Algorithm> heaps;
     const ReachabilityFacade facade;
 
-    const auto reachable_nodes =
-        reachabilitySearch(heaps, facade, {makeSource()}, EdgeDuration{5});
+    const auto result = reachabilitySearch(heaps, facade, {makeSource()}, EdgeDuration{5});
+    const auto &reachable_nodes = result.nodes;
 
+    BOOST_REQUIRE(result.isComplete());
     BOOST_REQUIRE_EQUAL(reachable_nodes.size(), 2);
 
     BOOST_CHECK_EQUAL(reachable_nodes[0].node, 5);
@@ -166,9 +166,10 @@ BOOST_AUTO_TEST_CASE(charges_the_source_node_duration_and_turn_penalty)
     SearchEngineData<Algorithm> heaps;
     const ReachabilityFacade facade;
 
-    const auto reachable_nodes =
-        reachabilitySearch(heaps, facade, {makeSource()}, EdgeDuration{4});
+    const auto result = reachabilitySearch(heaps, facade, {makeSource()}, EdgeDuration{4});
+    const auto &reachable_nodes = result.nodes;
 
+    BOOST_REQUIRE(result.isComplete());
     const auto node_one = std::find_if(reachable_nodes.begin(),
                                        reachable_nodes.end(),
                                        [](const auto &result) { return result.node == 1; });
@@ -189,9 +190,11 @@ BOOST_AUTO_TEST_CASE(uses_every_source_candidate)
     additional_source.forward_duration = {0};
     additional_source.forward_duration_offset = {0};
 
-    const auto reachable_nodes =
+    const auto result =
         reachabilitySearch(heaps, facade, {makeSource(), additional_source}, EdgeDuration{1});
+    const auto &reachable_nodes = result.nodes;
 
+    BOOST_REQUIRE(result.isComplete());
     const auto node_three = std::find_if(reachable_nodes.begin(),
                                          reachable_nodes.end(),
                                          [](const auto &result) { return result.node == 3; });
@@ -205,12 +208,13 @@ BOOST_AUTO_TEST_CASE(allows_a_real_path_to_reenter_its_source_node)
     SearchEngineData<Algorithm> heaps;
     const ReachabilityFacade facade{true};
 
-    const auto reachable_nodes =
-        reachabilitySearch(heaps, facade, {makeSource()}, EdgeDuration{3});
+    const auto result = reachabilitySearch(heaps, facade, {makeSource()}, EdgeDuration{3});
+    const auto &reachable_nodes = result.nodes;
 
+    BOOST_REQUIRE(result.isComplete());
     const auto source_node = std::find_if(reachable_nodes.begin(),
-                                           reachable_nodes.end(),
-                                           [](const auto &result) { return result.node == 0; });
+                                          reachable_nodes.end(),
+                                          [](const auto &result) { return result.node == 0; });
     BOOST_REQUIRE(source_node != reachable_nodes.end());
     BOOST_CHECK_EQUAL(source_node->weight, EdgeWeight{101});
     BOOST_CHECK_EQUAL(source_node->duration, EdgeDuration{3});

@@ -74,8 +74,9 @@ engine::Status runIsochrone(OSRM &routing_machine,
 
 } // namespace
 
-engine::Status
-IsochroneService::RunQuery(std::size_t prefix_length, std::string &query, osrm::engine::api::ResultT &result)
+engine::Status IsochroneService::RunQuery(std::size_t prefix_length,
+                                          std::string &query,
+                                          osrm::engine::api::ResultT &result)
 {
     result = util::json::Object();
     auto &json_result = std::get<util::json::Object>(result);
@@ -95,6 +96,6 @@ IsochroneService::RunQuery(std::size_t prefix_length, std::string &query, osrm::
 
     return runIsochrone(BaseService::routing_machine, *parameters, result);
 }
-}
-}
-}
+} // namespace service
+} // namespace server
+} // namespace osrm

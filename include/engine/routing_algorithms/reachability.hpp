@@ -4,6 +4,7 @@
 #include "engine/algorithm.hpp"
 #include "engine/datafacade.hpp"
 #include "engine/phantom_node.hpp"
+#include "engine/routing_algorithms/isochrone_ch.hpp"
 #include "engine/routing_algorithms/routing_base_mld.hpp"
 #include "engine/search_engine_data.hpp"
 
@@ -11,26 +12,43 @@
 
 #include <boost/assert.hpp>
 
+#include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace osrm::engine::routing_algorithms
 {
 
-struct ReachabilityResult
+enum class ReachabilitySearchStatus : std::uint8_t
+{
+    Complete,
+    UnsupportedGraph,
+    ArithmeticOverflow
+};
+
+struct ReachabilityNode
 {
     NodeID node;
     EdgeWeight weight;
     EdgeDuration duration;
 };
 
+struct ReachabilitySearchResult
+{
+    std::vector<ReachabilityNode> nodes;
+    ReachabilitySearchStatus status = ReachabilitySearchStatus::Complete;
+
+    bool isComplete() const { return status == ReachabilitySearchStatus::Complete; }
+};
+
 namespace mld
 {
 
 template <typename FacadeT>
-std::vector<ReachabilityResult> reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
-                                                   const FacadeT &facade,
-                                                   const PhantomNodeCandidates &source_candidates,
-                                                   const EdgeDuration max_duration)
+ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
+                                            const FacadeT &facade,
+                                            const PhantomNodeCandidates &source_candidates,
+                                            const EdgeDuration max_duration)
 {
     BOOST_ASSERT(max_duration >= EdgeDuration{0});
 
@@ -75,7 +93,7 @@ std::vector<ReachabilityResult> reachabilitySearch(SearchEngineData<Algorithm> &
         }
     }
 
-    std::vector<ReachabilityResult> reachable_nodes;
+    ReachabilitySearchResult result;
     while (!query_heap.Empty())
     {
         const auto heap_node = query_heap.DeleteMinGetHeapNode();
@@ -85,30 +103,59 @@ std::vector<ReachabilityResult> reachabilitySearch(SearchEngineData<Algorithm> &
         // duration cutoff is therefore applied only to returned labels.
         if (heap_node.data.duration <= max_duration)
         {
-            reachable_nodes.push_back({heap_node.node, heap_node.weight, heap_node.data.duration});
+            result.nodes.push_back({heap_node.node, heap_node.weight, heap_node.data.duration});
         }
 
         relaxOutgoingEdges<FORWARD_DIRECTION>(facade, query_heap, heap_node, ReachabilitySearch{});
     }
 
-    return reachable_nodes;
+    return result;
 }
 
 } // namespace mld
 
 template <typename Algorithm>
-std::vector<ReachabilityResult> reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
-                                                   const DataFacade<Algorithm> &facade,
-                                                   const PhantomNodeCandidates &source_candidates,
-                                                   EdgeDuration max_duration);
+ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
+                                            const DataFacade<Algorithm> &facade,
+                                            const PhantomNodeCandidates &source_candidates,
+                                            EdgeDuration max_duration);
 
 template <>
-inline std::vector<ReachabilityResult>
+inline ReachabilitySearchResult
 reachabilitySearch<mld::Algorithm>(SearchEngineData<mld::Algorithm> &engine_working_data,
                                    const DataFacade<mld::Algorithm> &facade,
                                    const PhantomNodeCandidates &source_candidates,
                                    const EdgeDuration max_duration)
 { return mld::reachabilitySearch(engine_working_data, facade, source_candidates, max_duration); }
+
+template <>
+inline ReachabilitySearchResult
+reachabilitySearch<ch::Algorithm>(SearchEngineData<ch::Algorithm> &engine_working_data,
+                                  const DataFacade<ch::Algorithm> &facade,
+                                  const PhantomNodeCandidates &source_candidates,
+                                  const EdgeDuration max_duration)
+{
+    static_cast<void>(engine_working_data);
+    auto ch_result = ch::phastOneToAllSearch(facade, source_candidates, max_duration);
+
+    ReachabilitySearchResult result;
+    result.nodes.reserve(ch_result.nodes.size());
+    for (const auto &node : ch_result.nodes)
+        result.nodes.push_back({node.node, node.weight, node.duration});
+
+    switch (ch_result.status)
+    {
+    case ch::IsochroneSearchStatus::Complete:
+        break;
+    case ch::IsochroneSearchStatus::UnsupportedCHGraph:
+        result.status = ReachabilitySearchStatus::UnsupportedGraph;
+        break;
+    case ch::IsochroneSearchStatus::ArithmeticOverflow:
+        result.status = ReachabilitySearchStatus::ArithmeticOverflow;
+        break;
+    }
+    return result;
+}
 
 } // namespace osrm::engine::routing_algorithms
 

@@ -3,8 +3,8 @@
 
 #include "engine/api/isochrone_parameters.hpp"
 #include "engine/plugins/plugin_base.hpp"
-#include "engine/routing_algorithms/many_to_many.hpp"
 #include "engine/routing_algorithms.hpp"
+#include "engine/routing_algorithms/many_to_many.hpp"
 #include "engine/search_engine_data.hpp"
 
 #include <string>
@@ -31,8 +31,8 @@ class IsochronePlugin final : public BasePlugin
   private:
     const int max_range_seconds;
 };
-}
-}
-}
+} // namespace plugins
+} // namespace engine
+} // namespace osrm
 
 #endif /* TILEPLUGIN_HPP */
