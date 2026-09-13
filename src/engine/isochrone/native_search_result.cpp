@@ -54,21 +54,20 @@ std::optional<bool> intersectsCutoff(const datafacade::BaseDataFacade &facade,
     return last_duration <= from_alias<std::int64_t>(duration_cutoff);
 }
 
-bool isValidMetric(const EdgeWeight metric)
-{ return metric != INVALID_EDGE_WEIGHT; }
+bool isValidMetric(const EdgeWeight metric) { return metric != INVALID_EDGE_WEIGHT; }
 
 bool isValidMetric(const EdgeDuration metric)
 { return metric != INVALID_EDGE_DURATION && metric != MAXIMAL_EDGE_DURATION; }
 
 } // namespace
 
-SearchResult makeNativeSearchResult(
-    const datafacade::BaseDataFacade &facade,
-    const routing_algorithms::ReachabilitySearchResult &native_result,
-    const PhantomNodeCandidates &endpoint_candidates,
-    const EdgeDuration duration_cutoff,
-    const std::size_t maximum_records,
-    const bool inbound)
+SearchResult
+makeNativeSearchResult(const datafacade::BaseDataFacade &facade,
+                       const routing_algorithms::ReachabilitySearchResult &native_result,
+                       const PhantomNodeCandidates &endpoint_candidates,
+                       const EdgeDuration duration_cutoff,
+                       const std::size_t maximum_records,
+                       const bool inbound)
 {
     SearchResult result;
     if (!native_result.isComplete())
@@ -79,8 +78,8 @@ SearchResult makeNativeSearchResult(
 
     const auto reserve_record = [&]()
     {
-        const auto used = result.nodes.size() + result.competitors.size() +
-                          result.phantom_partials.size();
+        const auto used =
+            result.nodes.size() + result.competitors.size() + result.phantom_partials.size();
         if (used >= maximum_records)
         {
             result.status = SearchStatus::SearchRecordLimitReached;
@@ -90,28 +89,24 @@ SearchResult makeNativeSearchResult(
     };
 
     std::unordered_set<PackedGeometryID> candidate_geometries;
-    const auto append_partial = [&](const PhantomNode &phantom,
-                                    const NodeID node,
-                                    const bool forward)
+    const auto append_partial =
+        [&](const PhantomNode &phantom, const NodeID node, const bool forward)
     {
         if (!result.isComplete() || facade.ExcludeNode(node))
             return;
         if (!reserve_record())
             return;
 
-        const auto seed_weight = inbound
-                                     ? (forward ? phantom.GetForwardWeightAsTarget()
-                                                : phantom.GetReverseWeightAsTarget())
-                                     : (forward ? phantom.GetForwardWeightAsSource()
-                                                : phantom.GetReverseWeightAsSource());
-        const auto seed_duration = inbound
-                                       ? (forward ? phantom.GetForwardDurationAsTarget()
-                                                  : phantom.GetReverseDurationAsTarget())
-                                       : (forward ? phantom.GetForwardDurationAsSource()
-                                                  : phantom.GetReverseDurationAsSource());
+        const auto seed_weight = inbound ? (forward ? phantom.GetForwardWeightAsTarget()
+                                                    : phantom.GetReverseWeightAsTarget())
+                                         : (forward ? phantom.GetForwardWeightAsSource()
+                                                    : phantom.GetReverseWeightAsSource());
+        const auto seed_duration = inbound ? (forward ? phantom.GetForwardDurationAsTarget()
+                                                      : phantom.GetReverseDurationAsTarget())
+                                           : (forward ? phantom.GetForwardDurationAsSource()
+                                                      : phantom.GetReverseDurationAsSource());
         if (!isValidMetric(seed_weight) || !isValidMetric(seed_duration) ||
-            !isValidMetric(phantom.approach_weight) ||
-            !isValidMetric(phantom.approach_duration))
+            !isValidMetric(phantom.approach_weight) || !isValidMetric(phantom.approach_duration))
         {
             result.status = SearchStatus::ArithmeticOverflow;
             return;

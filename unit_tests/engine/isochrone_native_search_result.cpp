@@ -85,8 +85,7 @@ BOOST_AUTO_TEST_CASE(enforces_the_retained_search_record_limit)
     const auto result = osrm::engine::isochrone::makeNativeSearchResult(
         facade, native_result, {}, EdgeDuration{100}, 1, false);
 
-    BOOST_CHECK(result.status ==
-                osrm::engine::isochrone::SearchStatus::SearchRecordLimitReached);
+    BOOST_CHECK(result.status == osrm::engine::isochrone::SearchStatus::SearchRecordLimitReached);
 }
 
 BOOST_AUTO_TEST_CASE(skips_native_labels_without_materializable_geometry)

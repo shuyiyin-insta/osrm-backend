@@ -100,8 +100,8 @@ GeometryPolygon toGeometryPolygon(const osrm::engine::isochrone::GridPolygon &po
     return result;
 }
 
-GeometryMultiPolygon toGeometryMultiPolygon(
-    const std::vector<osrm::engine::isochrone::GridPolygon> &polygons)
+GeometryMultiPolygon
+toGeometryMultiPolygon(const std::vector<osrm::engine::isochrone::GridPolygon> &polygons)
 {
     GeometryMultiPolygon result;
     for (const auto &polygon : polygons)
