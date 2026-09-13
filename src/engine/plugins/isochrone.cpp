@@ -49,7 +49,7 @@ Status IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorith
         if (contour_seconds > static_cast<double>(max_range_seconds))
         {
             return Error(
-                "TooBig", "Contour exceeds the configured maximum isochrone range.", result);
+                "InvalidOptions", "Contour exceeds the configured maximum isochrone range.", result);
         }
 
         const auto contour_duration = isochrone::durationCutoffFromSeconds(contour_seconds);
