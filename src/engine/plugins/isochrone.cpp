@@ -30,8 +30,6 @@ struct GeometryLabel
 };
 } // namespace
 
-IsochronePlugin::IsochronePlugin(int max_range_seconds_) : max_range_seconds(max_range_seconds_) {}
-
 Status IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorithms,
                                       const api::IsochroneParameters &parameters,
                                       osrm::engine::api::ResultT &result) const
