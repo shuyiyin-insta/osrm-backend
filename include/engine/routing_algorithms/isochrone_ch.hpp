@@ -168,8 +168,8 @@ bool initializeSources(IsochroneCHQueryHeap &heap,
     const auto number_of_nodes = facade.GetNumberOfNodes();
     for (const auto &endpoint : endpoint_candidates)
     {
-        const auto forward_is_valid = FORWARD_SEARCH ? endpoint.IsValidForwardSource()
-                                                     : endpoint.IsValidForwardTarget();
+        const auto forward_is_valid =
+            FORWARD_SEARCH ? endpoint.IsValidForwardSource() : endpoint.IsValidForwardTarget();
         if (forward_is_valid)
         {
             const auto weight = FORWARD_SEARCH ? endpoint.GetForwardWeightAsSource()
@@ -177,14 +177,11 @@ bool initializeSources(IsochroneCHQueryHeap &heap,
             const auto duration = FORWARD_SEARCH ? endpoint.GetForwardDurationAsSource()
                                                  : endpoint.GetForwardDurationAsTarget();
             if (endpoint.forward_segment_id.id >= number_of_nodes ||
-                !insertSource(source_labels,
-                              endpoint.forward_segment_id.id,
-                              weight,
-                              duration))
+                !insertSource(source_labels, endpoint.forward_segment_id.id, weight, duration))
                 return false;
         }
-        const auto reverse_is_valid = FORWARD_SEARCH ? endpoint.IsValidReverseSource()
-                                                     : endpoint.IsValidReverseTarget();
+        const auto reverse_is_valid =
+            FORWARD_SEARCH ? endpoint.IsValidReverseSource() : endpoint.IsValidReverseTarget();
         if (reverse_is_valid)
         {
             const auto weight = FORWARD_SEARCH ? endpoint.GetReverseWeightAsSource()
@@ -192,10 +189,7 @@ bool initializeSources(IsochroneCHQueryHeap &heap,
             const auto duration = FORWARD_SEARCH ? endpoint.GetReverseDurationAsSource()
                                                  : endpoint.GetReverseDurationAsTarget();
             if (endpoint.reverse_segment_id.id >= number_of_nodes ||
-                !insertSource(source_labels,
-                              endpoint.reverse_segment_id.id,
-                              weight,
-                              duration))
+                !insertSource(source_labels, endpoint.reverse_segment_id.id, weight, duration))
                 return false;
         }
     }
@@ -369,8 +363,7 @@ bool runCoreSearch(const CHFacade &facade,
     while (!heap.Empty())
     {
         const auto current = heap.DeleteMinGetHeapNode();
-        const IsochroneCHNodeLabel current_label{
-            current.weight, current.data.duration, true};
+        const IsochroneCHNodeLabel current_label{current.weight, current.data.duration, true};
         if (!relaxCoreOutgoingEdges<FORWARD_SEARCH>(
                 facade, order, current.node, current_label, labels, heap))
             return false;
@@ -422,11 +415,11 @@ bool runDownwardSweep(const CHFacade &facade,
 // that selected CH path.  The cutoff filters final labels only, because a lower-weight label above
 // the duration cutoff can still suppress a higher-weight, shorter-duration candidate downstream.
 template <bool FORWARD_SEARCH = true, typename CHFacade>
-IsochroneSearchResult phastOneToAllSearch(const CHFacade &facade,
-                                          const PhantomNodeCandidates &endpoint_candidates,
-                                          const EdgeDuration duration_cutoff,
-                                          const std::size_t maximum_search_nodes =
-                                              std::numeric_limits<std::size_t>::max())
+IsochroneSearchResult phastOneToAllSearch(
+    const CHFacade &facade,
+    const PhantomNodeCandidates &endpoint_candidates,
+    const EdgeDuration duration_cutoff,
+    const std::size_t maximum_search_nodes = std::numeric_limits<std::size_t>::max())
 {
     IsochroneSearchResult result;
     BOOST_ASSERT(duration_cutoff >= EdgeDuration{0});

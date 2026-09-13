@@ -93,8 +93,7 @@ class ContiguousInternalMemoryAlgorithmDataFacade<CH> : public datafacade::Algor
     // Returns nullptr when the filtered CH graph has an invalid edge endpoint.  A remaining
     // uncontracted core is represented in the cached rank and handled by the isochrone search.
     // The result is immutable for this facade and initialized at most once.
-    const routing_algorithms::ch::IsochroneCHTopologicalOrder *GetIsochroneTopologicalOrder()
-        const;
+    const routing_algorithms::ch::IsochroneCHTopologicalOrder *GetIsochroneTopologicalOrder() const;
 
     // search graph access
     unsigned GetNumberOfNodes() const override final { return m_query_graph.GetNumberOfNodes(); }

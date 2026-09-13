@@ -19,8 +19,7 @@ BOOST_AUTO_TEST_CASE(caches_the_filtered_monaco_ch_graph)
         storage::StorageConfig(OSRM_TEST_DATA_DIR "/ch/monaco.osrm"));
     const auto *properties =
         allocator->GetIndex().GetBlockPtr<extractor::ProfileProperties>("/common/properties");
-    const ContiguousInternalMemoryDataFacade<CH> facade{
-        allocator, properties->GetWeightName(), 0};
+    const ContiguousInternalMemoryDataFacade<CH> facade{allocator, properties->GetWeightName(), 0};
 
     const auto *order = facade.GetIsochroneTopologicalOrder();
     const auto *cached_order = facade.GetIsochroneTopologicalOrder();

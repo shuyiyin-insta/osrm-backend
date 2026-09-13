@@ -150,11 +150,11 @@ PhantomNode makeTarget()
         unsigned short fwd_segment_position = 0;
     };
 
-    return PhantomNode{Seed{}, {1, false}, {0},  INVALID_EDGE_WEIGHT,
-                       {0},    {0},        {0},  {0},
-                       {0},    {0},        {0},  MAXIMAL_EDGE_DURATION,
+    return PhantomNode{Seed{}, {1, false}, {0},   INVALID_EDGE_WEIGHT,
+                       {0},    {0},        {0},   {0},
+                       {0},    {0},        {0},   MAXIMAL_EDGE_DURATION,
                        {0},    {0},        false, true,
-                       false,  false,      {},   {},
+                       false,  false,      {},    {},
                        0};
 }
 } // namespace
@@ -251,13 +251,12 @@ BOOST_AUTO_TEST_CASE(inbound_search_uses_target_seeds_and_reverse_edges)
     SearchEngineData<Algorithm> heaps;
     const ReachabilityFacade facade{false, true};
 
-    const auto result = reachabilitySearch<REVERSE_DIRECTION>(
-        heaps, facade, {makeTarget()}, EdgeDuration{2});
+    const auto result =
+        reachabilitySearch<REVERSE_DIRECTION>(heaps, facade, {makeTarget()}, EdgeDuration{2});
 
     BOOST_REQUIRE(result.isComplete());
-    const auto node_one = std::find_if(result.nodes.begin(),
-                                       result.nodes.end(),
-                                       [](const auto &node) { return node.node == 1; });
+    const auto node_one = std::find_if(
+        result.nodes.begin(), result.nodes.end(), [](const auto &node) { return node.node == 1; });
     BOOST_REQUIRE(node_one != result.nodes.end());
     BOOST_CHECK_EQUAL(node_one->weight, EdgeWeight{1});
     BOOST_CHECK_EQUAL(node_one->duration, EdgeDuration{2});
@@ -268,8 +267,7 @@ BOOST_AUTO_TEST_CASE(reports_duration_arithmetic_overflow)
     SearchEngineData<Algorithm> heaps;
     const ReachabilityFacade facade{false, false, true};
 
-    const auto result = reachabilitySearch(
-        heaps, facade, {makeSource()}, EdgeDuration{100});
+    const auto result = reachabilitySearch(heaps, facade, {makeSource()}, EdgeDuration{100});
 
     BOOST_CHECK(result.status == ReachabilitySearchStatus::ArithmeticOverflow);
 }
@@ -279,8 +277,8 @@ BOOST_AUTO_TEST_CASE(rejects_graphs_above_the_search_node_limit)
     SearchEngineData<Algorithm> heaps;
     const ReachabilityFacade facade;
 
-    const auto result = reachabilitySearch<FORWARD_DIRECTION>(
-        heaps, facade, {makeSource()}, EdgeDuration{100}, 6);
+    const auto result =
+        reachabilitySearch<FORWARD_DIRECTION>(heaps, facade, {makeSource()}, EdgeDuration{100}, 6);
 
     BOOST_CHECK(result.status == ReachabilitySearchStatus::SearchNodeLimitReached);
     BOOST_CHECK(result.nodes.empty());

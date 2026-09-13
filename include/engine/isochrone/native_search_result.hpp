@@ -14,13 +14,13 @@ namespace osrm::engine::isochrone
 // Converts native CH/MLD one-to-all labels into the geometry-scoped contract consumed by the
 // contour materializer. The native searches retain every settled minimum-weight label; only
 // labels that can affect a geometry intersecting the duration cutoff are carried forward.
-SearchResult makeNativeSearchResult(
-    const datafacade::BaseDataFacade &facade,
-    const routing_algorithms::ReachabilitySearchResult &native_result,
-    const PhantomNodeCandidates &endpoint_candidates,
-    EdgeDuration duration_cutoff,
-    std::size_t maximum_records,
-    bool inbound);
+SearchResult
+makeNativeSearchResult(const datafacade::BaseDataFacade &facade,
+                       const routing_algorithms::ReachabilitySearchResult &native_result,
+                       const PhantomNodeCandidates &endpoint_candidates,
+                       EdgeDuration duration_cutoff,
+                       std::size_t maximum_records,
+                       bool inbound);
 
 } // namespace osrm::engine::isochrone
 

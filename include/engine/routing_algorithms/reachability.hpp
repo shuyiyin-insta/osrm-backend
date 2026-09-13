@@ -65,7 +65,7 @@ bool relaxReachabilityEdges(const FacadeT &facade, Heap &heap, const HeapNodeT &
     for (const auto edge : facade.GetBorderEdgeRange(0, heap_node.node))
     {
         const auto traversable = DIRECTION == FORWARD_DIRECTION ? facade.IsForwardEdge(edge)
-                                                               : facade.IsBackwardEdge(edge);
+                                                                : facade.IsBackwardEdge(edge);
         if (!traversable)
             continue;
 
@@ -78,17 +78,16 @@ bool relaxReachabilityEdges(const FacadeT &facade, Heap &heap, const HeapNodeT &
         EdgeWeight weight;
         if (!checkedAdd(heap_node.weight, facade.GetNodeWeight(metric_node), weight) ||
             !checkedAdd(weight,
-                        alias_cast<EdgeWeight>(
-                            facade.GetWeightPenaltyForEdgeID(edge_data.turn_id)),
+                        alias_cast<EdgeWeight>(facade.GetWeightPenaltyForEdgeID(edge_data.turn_id)),
                         weight))
             return false;
 
         EdgeDuration duration;
         if (!checkedAdd(heap_node.data.duration, facade.GetNodeDuration(metric_node), duration) ||
-            !checkedAdd(duration,
-                        alias_cast<EdgeDuration>(
-                            facade.GetDurationPenaltyForEdgeID(edge_data.turn_id)),
-                        duration))
+            !checkedAdd(
+                duration,
+                alias_cast<EdgeDuration>(facade.GetDurationPenaltyForEdgeID(edge_data.turn_id)),
+                duration))
             return false;
 
         insertOrUpdate(heap, target, weight, {heap_node.node, false, duration});
@@ -97,12 +96,12 @@ bool relaxReachabilityEdges(const FacadeT &facade, Heap &heap, const HeapNodeT &
 }
 
 template <bool DIRECTION, typename FacadeT>
-ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
-                                            const FacadeT &facade,
-                                            const PhantomNodeCandidates &endpoint_candidates,
-                                            const EdgeDuration max_duration,
-                                            const std::size_t maximum_search_nodes =
-                                                std::numeric_limits<std::size_t>::max())
+ReachabilitySearchResult
+reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
+                   const FacadeT &facade,
+                   const PhantomNodeCandidates &endpoint_candidates,
+                   const EdgeDuration max_duration,
+                   const std::size_t maximum_search_nodes = std::numeric_limits<std::size_t>::max())
 {
     BOOST_ASSERT(max_duration >= EdgeDuration{0});
 
@@ -146,12 +145,10 @@ ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_
         if (forward_is_valid)
         {
             insert_source(endpoint.forward_segment_id.id,
-                          DIRECTION == FORWARD_DIRECTION
-                              ? endpoint.GetForwardWeightAsSource()
-                              : endpoint.GetForwardWeightAsTarget(),
-                          DIRECTION == FORWARD_DIRECTION
-                              ? endpoint.GetForwardDurationAsSource()
-                              : endpoint.GetForwardDurationAsTarget());
+                          DIRECTION == FORWARD_DIRECTION ? endpoint.GetForwardWeightAsSource()
+                                                         : endpoint.GetForwardWeightAsTarget(),
+                          DIRECTION == FORWARD_DIRECTION ? endpoint.GetForwardDurationAsSource()
+                                                         : endpoint.GetForwardDurationAsTarget());
         }
         const auto reverse_is_valid = DIRECTION == FORWARD_DIRECTION
                                           ? endpoint.IsValidReverseSource()
@@ -159,12 +156,10 @@ ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_
         if (reverse_is_valid)
         {
             insert_source(endpoint.reverse_segment_id.id,
-                          DIRECTION == FORWARD_DIRECTION
-                              ? endpoint.GetReverseWeightAsSource()
-                              : endpoint.GetReverseWeightAsTarget(),
-                          DIRECTION == FORWARD_DIRECTION
-                              ? endpoint.GetReverseDurationAsSource()
-                              : endpoint.GetReverseDurationAsTarget());
+                          DIRECTION == FORWARD_DIRECTION ? endpoint.GetReverseWeightAsSource()
+                                                         : endpoint.GetReverseWeightAsTarget(),
+                          DIRECTION == FORWARD_DIRECTION ? endpoint.GetReverseDurationAsSource()
+                                                         : endpoint.GetReverseDurationAsTarget());
         }
     }
     if (!result.isComplete())
@@ -210,13 +205,13 @@ ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_
 } // namespace mld
 
 template <typename Algorithm>
-ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
-                                            const DataFacade<Algorithm> &facade,
-                                            const PhantomNodeCandidates &source_candidates,
-                                            EdgeDuration max_duration,
-                                            bool inbound = false,
-                                            std::size_t maximum_search_nodes =
-                                                std::numeric_limits<std::size_t>::max());
+ReachabilitySearchResult
+reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
+                   const DataFacade<Algorithm> &facade,
+                   const PhantomNodeCandidates &source_candidates,
+                   EdgeDuration max_duration,
+                   bool inbound = false,
+                   std::size_t maximum_search_nodes = std::numeric_limits<std::size_t>::max());
 
 template <>
 inline ReachabilitySearchResult
@@ -244,11 +239,10 @@ reachabilitySearch<ch::Algorithm>(SearchEngineData<ch::Algorithm> &engine_workin
                                   const std::size_t maximum_search_nodes)
 {
     static_cast<void>(engine_working_data);
-    auto ch_result =
-        inbound ? ch::phastOneToAllSearch<false>(
-                      facade, source_candidates, max_duration, maximum_search_nodes)
-                : ch::phastOneToAllSearch<true>(
-                      facade, source_candidates, max_duration, maximum_search_nodes);
+    auto ch_result = inbound ? ch::phastOneToAllSearch<false>(
+                                   facade, source_candidates, max_duration, maximum_search_nodes)
+                             : ch::phastOneToAllSearch<true>(
+                                   facade, source_candidates, max_duration, maximum_search_nodes);
 
     ReachabilitySearchResult result;
     result.nodes.reserve(ch_result.nodes.size());
