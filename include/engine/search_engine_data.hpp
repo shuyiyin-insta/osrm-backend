@@ -133,6 +133,21 @@ struct ManyToManyMultiLayerDijkstraHeapData : MultiLayerDijkstraHeapData
     }
 };
 
+struct ReachabilityMultiLayerDijkstraHeapData : MultiLayerDijkstraHeapData
+{
+    EdgeDuration duration;
+
+    ReachabilityMultiLayerDijkstraHeapData(NodeID p, EdgeDuration duration)
+        : MultiLayerDijkstraHeapData(p), duration(duration)
+    {
+    }
+
+    ReachabilityMultiLayerDijkstraHeapData(NodeID p, bool from, EdgeDuration duration)
+        : MultiLayerDijkstraHeapData(p, from), duration(duration)
+    {
+    }
+};
+
 struct MLDUnpackingCacheKey
 {
     NodeID source;
@@ -191,6 +206,11 @@ template <> struct SearchEngineData<routing_algorithms::mld::Algorithm>
                                                 EdgeWeight,
                                                 ManyToManyMultiLayerDijkstraHeapData,
                                                 util::TwoLevelStorage<NodeID, int>>;
+    using ReachabilityQueryHeap = util::QueryHeap<NodeID,
+                                                  NodeID,
+                                                  EdgeWeight,
+                                                  ReachabilityMultiLayerDijkstraHeapData,
+                                                  util::TwoLevelStorage<NodeID, int>>;
     using MapMatchingQueryHeap = util::QueryHeap<NodeID,
                                                  NodeID,
                                                  EdgeWeight,
@@ -199,6 +219,7 @@ template <> struct SearchEngineData<routing_algorithms::mld::Algorithm>
 
     using SearchEngineHeapPtr = std::unique_ptr<QueryHeap>;
     using ManyToManyHeapPtr = std::unique_ptr<ManyToManyQueryHeap>;
+    using ReachabilityHeapPtr = std::unique_ptr<ReachabilityQueryHeap>;
     using MapMatchingHeapPtr = std::unique_ptr<MapMatchingQueryHeap>;
     using UnpackingCachePtr = std::unique_ptr<MLDUnpackingCache>;
 
@@ -208,6 +229,7 @@ template <> struct SearchEngineData<routing_algorithms::mld::Algorithm>
     static thread_local MapMatchingHeapPtr map_matching_reverse_heap_1;
 
     static thread_local ManyToManyHeapPtr many_to_many_heap;
+    static thread_local ReachabilityHeapPtr reachability_heap;
     static thread_local UnpackingCachePtr unpacking_cache;
     static thread_local unsigned unpacking_cache_node_count;
     static thread_local unsigned unpacking_cache_edge_count;
@@ -219,6 +241,9 @@ template <> struct SearchEngineData<routing_algorithms::mld::Algorithm>
 
     void InitializeOrClearManyToManyThreadLocalStorage(unsigned number_of_nodes,
                                                        unsigned number_of_boundary_nodes);
+
+    void InitializeOrClearReachabilityThreadLocalStorage(unsigned number_of_nodes,
+                                                         unsigned number_of_boundary_nodes);
 
     void InitializeUnpackingCache(unsigned number_of_nodes, unsigned number_of_edges);
 };

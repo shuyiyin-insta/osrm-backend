@@ -112,6 +112,16 @@ inline LevelID getNodeQueryLevel(const MultiLevelPartition &partition,
                     lowestDifferentLevel(partition, node, endpoint_candidates.target_phantoms));
 }
 
+// A reachability query has no target that could select a shortcut level. It therefore expands
+// base graph edges only, which is the one MLD traversal level that reaches every edge-based node.
+struct ReachabilitySearch
+{
+};
+
+template <typename MultiLevelPartition>
+inline LevelID getNodeQueryLevel(const MultiLevelPartition &, NodeID, const ReachabilitySearch &)
+{ return 0; }
+
 template <typename PhantomCandidateT>
 inline bool checkParentCellRestriction(CellID, const PhantomCandidateT &)
 { return true; }
@@ -300,10 +310,10 @@ void insertOrUpdate(Heap &heap,
     }
 }
 
-template <bool DIRECTION, typename Algorithm, typename Heap, typename... Args>
-void relaxOutgoingEdges(const DataFacade<Algorithm> &facade,
+template <bool DIRECTION, typename FacadeT, typename Heap, typename HeapNodeT, typename... Args>
+void relaxOutgoingEdges(const FacadeT &facade,
                         Heap &forward_heap,
-                        const typename Heap::HeapNode &heapNode,
+                        const HeapNodeT &heapNode,
                         const Args &...args)
 {
     const auto &partition = facade.GetMultiLevelPartition();
@@ -314,8 +324,14 @@ void relaxOutgoingEdges(const DataFacade<Algorithm> &facade,
 
     static constexpr auto IS_MAP_MATCHING =
         std::is_same_v<SearchEngineData<mld::Algorithm>::MapMatchingQueryHeap, Heap>;
+    static constexpr auto IS_REACHABILITY =
+        std::is_same_v<SearchEngineData<mld::Algorithm>::ReachabilityQueryHeap, Heap>;
 
-    if (level >= 1 && !heapNode.data.from_clique_arc)
+    if constexpr (IS_REACHABILITY)
+    {
+        BOOST_ASSERT(level == 0);
+    }
+    else if (level >= 1 && !heapNode.data.from_clique_arc)
     {
         if constexpr (DIRECTION == FORWARD_DIRECTION)
         {
@@ -438,6 +454,17 @@ void relaxOutgoingEdges(const DataFacade<Algorithm> &facade,
                     const EdgeDistance to_distance = heapNode.data.distance + node_distance;
                     insertOrUpdate(
                         forward_heap, to, to_weight, {heapNode.node, false, to_distance});
+                }
+                else if constexpr (IS_REACHABILITY)
+                {
+                    const auto node_duration =
+                        facade.GetNodeDuration(DIRECTION == FORWARD_DIRECTION ? heapNode.node : to);
+                    const auto turn_duration =
+                        facade.GetDurationPenaltyForEdgeID(edge_data.turn_id);
+                    const EdgeDuration to_duration = heapNode.data.duration + node_duration +
+                                                     alias_cast<EdgeDuration>(turn_duration);
+                    insertOrUpdate(
+                        forward_heap, to, to_weight, {heapNode.node, false, to_duration});
                 }
                 else
                 {
