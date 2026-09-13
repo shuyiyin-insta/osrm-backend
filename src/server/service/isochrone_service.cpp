@@ -9,6 +9,9 @@
 
 #include "util/json_container.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 namespace osrm
 {
 namespace server
@@ -40,10 +43,27 @@ std::string getWrongOptionHelp(const engine::api::IsochroneParameters &parameter
 
     if (!parameter_size_mismatch && coordinate_count != 1)
         help = "Exactly one coordinate is required.";
-    else if (!parameter_size_mismatch && parameters.range < 1)
-        help = "Range must be at least 1.";
-    else if (!parameter_size_mismatch)
-        help = "Invalid isochrone parameters.";
+    else if (!parameter_size_mismatch && parameters.contours_seconds.empty())
+        help = "At least one contours_seconds value is required.";
+    else if (!parameter_size_mismatch &&
+             std::any_of(parameters.contours_seconds.begin(),
+                         parameters.contours_seconds.end(),
+                         [](const double contour_seconds)
+                         { return !std::isfinite(contour_seconds) || contour_seconds <= 0.; }))
+    {
+        help = "contours_seconds must contain finite durations in seconds greater than zero.";
+    }
+    else if (!parameter_size_mismatch && parameters.generalize &&
+             (!std::isfinite(*parameters.generalize) || *parameters.generalize < 0.))
+    {
+        help = "Generalize must be a finite nonnegative tolerance in metres.";
+    }
+    else if (!parameter_size_mismatch && parameters.denoise &&
+             (!std::isfinite(*parameters.denoise) || *parameters.denoise < 0. ||
+              *parameters.denoise > 1.))
+    {
+        help = "Denoise must be a finite number between zero and one.";
+    }
 
     return help;
 }

@@ -40,10 +40,14 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_parameters_before_accessing_the_start_coord
     multiple_coordinates.coordinates = {get_dummy_location(), get_dummy_location()};
     checkInvalidParameters(routing_machine, multiple_coordinates);
 
-    osrm::IsochroneParameters zero_range;
-    zero_range.coordinates = {get_dummy_location()};
-    zero_range.range = 0;
-    checkInvalidParameters(routing_machine, zero_range);
+    osrm::IsochroneParameters no_contours;
+    no_contours.coordinates = {get_dummy_location()};
+    checkInvalidParameters(routing_machine, no_contours);
+
+    osrm::IsochroneParameters zero_contour;
+    zero_contour.coordinates = {get_dummy_location()};
+    zero_contour.contours_seconds = {0.};
+    checkInvalidParameters(routing_machine, zero_contour);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

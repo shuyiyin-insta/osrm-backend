@@ -120,24 +120,12 @@ Status OSRM::Tile(const engine::api::TileParameters &params, std::string &str_re
 Status OSRM::Tile(const engine::api::TileParameters &params, engine::api::ResultT &result) const
 { return engine_->Tile(params, result); }
 
-engine::Status OSRM::Isochrone(const engine::api::IsochroneParameters &params,
-                               std::string &str_result) const
+Status OSRM::Isochrone(const engine::api::IsochroneParameters &params,
+                       json::Object &json_result) const
 {
-    osrm::engine::api::ResultT result = flatbuffers::FlatBufferBuilder();
+    osrm::engine::api::ResultT result = json::Object();
     auto status = engine_->Isochrone(params, result);
-    if (std::holds_alternative<flatbuffers::FlatBufferBuilder>(result))
-    {
-        auto &fb = std::get<flatbuffers::FlatBufferBuilder>(result);
-        str_result.assign(reinterpret_cast<const char *>(fb.GetBufferPointer()), fb.GetSize());
-    }
-    else if (std::holds_alternative<std::string>(result))
-    {
-        str_result = std::get<std::string>(result);
-    }
-    else
-    {
-        str_result.clear();
-    }
+    json_result = std::move(std::get<json::Object>(result));
     return status;
 }
 

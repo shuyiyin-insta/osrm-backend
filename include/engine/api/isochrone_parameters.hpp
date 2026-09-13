@@ -30,6 +30,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "engine/api/base_parameters.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <optional>
+#include <vector>
+
 namespace osrm
 {
 namespace engine
@@ -38,22 +43,40 @@ namespace api
 {
 
 /**
- * Parameters specific to the OSRM Tile service.
+ * Parameters specific to the OSRM Isochrone service.
  *
- * Holds member attributes:
- *  - lon: centerpoint
- *  - lat: centerpoint
- *  - range: distance to travel
- *
- * \see OSRM, Coordinate, Hint, Bearing, RouteParame, RouteParameters, TableParameters,
- *      NearestParameters, TripParameters, MatchParameters and TileParameters
+ * The contours_seconds member contains elapsed-duration thresholds in seconds.
  */
 struct IsochroneParameters : public BaseParameters
 {
+    enum class Direction
+    {
+        Outbound,
+        Inbound
+    };
+
+    std::vector<double> contours_seconds;
+    Direction direction = Direction::Outbound;
+    bool polygons = true;
+    std::optional<double> generalize = std::nullopt;
+    std::optional<double> denoise = std::nullopt;
+
+    // Retained while the existing max_isochrone_range configuration is wired into the engine.
     unsigned range = 15 * 60;
 
+    bool operator==(const IsochroneParameters &) const = default;
+
     bool IsValid() const
-    { return BaseParameters::IsValid() && coordinates.size() == 1 && range >= 1; }
+    {
+        return BaseParameters::IsValid() && coordinates.size() == 1 && !contours_seconds.empty() &&
+               (direction == Direction::Outbound || direction == Direction::Inbound) &&
+               (!generalize || (std::isfinite(*generalize) && *generalize >= 0.)) &&
+               (!denoise || (std::isfinite(*denoise) && *denoise >= 0. && *denoise <= 1.)) &&
+               std::all_of(contours_seconds.begin(),
+                           contours_seconds.end(),
+                           [](const double contour_seconds)
+                           { return std::isfinite(contour_seconds) && contour_seconds > 0.; });
+    }
 };
 } // namespace api
 } // namespace engine

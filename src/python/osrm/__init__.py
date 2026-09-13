@@ -2,6 +2,7 @@
 from .osrm_ext import (
     OSRM,
     EngineConfig,
+    IsochroneParameters,
     Bearing,
     Coordinate,
     RouteParameters,
