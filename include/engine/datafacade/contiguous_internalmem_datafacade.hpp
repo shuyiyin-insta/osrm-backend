@@ -8,6 +8,7 @@
 #include "engine/algorithm.hpp"
 #include "engine/approach.hpp"
 #include "engine/geospatial_query.hpp"
+#include "engine/routing_algorithms/isochrone_ch_topological_order.hpp"
 
 #include "storage/shared_datatype.hpp"
 #include "storage/shared_memory_ownership.hpp"
@@ -23,6 +24,8 @@
 #include <cstddef>
 #include <iterator>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -62,6 +65,12 @@ class ContiguousInternalMemoryAlgorithmDataFacade<CH> : public datafacade::Algor
 
     QueryGraph m_query_graph;
 
+    // This order is derived from the filtered CH graph owned by this immutable facade.  A data
+    // reload constructs a new facade, and therefore naturally gives the new graph a new cache.
+    mutable std::once_flag m_isochrone_topological_order_once;
+    mutable std::optional<routing_algorithms::ch::IsochroneCHTopologicalOrder>
+        m_isochrone_topological_order;
+
     // allocator that keeps the allocation data
     std::shared_ptr<ContiguousBlockAllocator> allocator;
 
@@ -80,6 +89,12 @@ class ContiguousInternalMemoryAlgorithmDataFacade<CH> : public datafacade::Algor
         m_query_graph =
             make_filtered_graph_view(index, "/ch/metrics/" + metric_name, exclude_index);
     }
+
+    // Returns nullptr when the filtered CH graph has an invalid edge endpoint.  A remaining
+    // uncontracted core is represented in the cached rank and handled by the isochrone search.
+    // The result is immutable for this facade and initialized at most once.
+    const routing_algorithms::ch::IsochroneCHTopologicalOrder *GetIsochroneTopologicalOrder()
+        const;
 
     // search graph access
     unsigned GetNumberOfNodes() const override final { return m_query_graph.GetNumberOfNodes(); }
