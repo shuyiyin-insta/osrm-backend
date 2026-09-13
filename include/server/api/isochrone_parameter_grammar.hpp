@@ -11,11 +11,15 @@ namespace osrm::server::api::isochrone_grammar
 namespace x3 = boost::spirit::x3;
 
 inline const auto range_rule = x3::rule<struct range_rule_tag>{"range_rule"} =
-    x3::lit("range=") > x3::uint_[([](auto &ctx) { x3::get<params_tag>(ctx).get().range = x3::_attr(ctx); })];
+    x3::lit("range=") >
+    x3::uint_[([](auto &ctx) { x3::get<params_tag>(ctx).get().range = x3::_attr(ctx); })];
+
+inline const auto format_rule = x3::rule<struct isochrone_format_tag>{"isochrone_format"} =
+    -x3::lit(".json");
 
 // Root rule: coords and optional format, then optional query options starting with '?'
 inline const auto root_rule = x3::rule<struct isochrone_root_tag>{"isochrone_root"} =
-    base_grammar::query_rule > base_grammar::format_rule >
+    base_grammar::query_rule > format_rule >
     -('?' > (range_rule | base_grammar::base_options) % '&');
 
 
