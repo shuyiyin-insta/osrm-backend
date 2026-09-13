@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <mutex>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -56,9 +58,29 @@ class SyntheticCHFacade
         return {m_edges.data() + begin, static_cast<std::size_t>(end - begin)};
     }
 
+    const IsochroneCHTopologicalOrder *GetIsochroneTopologicalOrder() const
+    {
+        std::call_once(m_isochrone_topological_order_once,
+                       [this]
+                       {
+                           ++m_isochrone_topological_order_build_count;
+                           IsochroneCHTopologicalOrder order;
+                           if (buildIsochroneCHTopologicalOrder(*this, order))
+                               m_isochrone_topological_order = std::move(order);
+                       });
+
+        return m_isochrone_topological_order ? &*m_isochrone_topological_order : nullptr;
+    }
+
+    unsigned GetIsochroneTopologicalOrderBuildCount() const
+    { return m_isochrone_topological_order_build_count; }
+
   private:
     std::vector<unsigned> m_offsets;
     std::vector<Edge> m_edges;
+    mutable std::once_flag m_isochrone_topological_order_once;
+    mutable std::optional<IsochroneCHTopologicalOrder> m_isochrone_topological_order;
+    mutable unsigned m_isochrone_topological_order_build_count = 0;
 };
 
 PhantomNode makeSource(const NodeID node,
@@ -181,6 +203,30 @@ BOOST_AUTO_TEST_CASE(outbound_upward_search_does_not_follow_backward_ch_arcs)
     BOOST_CHECK(findNode(result, 1) == nullptr);
 }
 
+BOOST_AUTO_TEST_CASE(reuses_the_topological_order_once_per_facade)
+{
+    const SyntheticCHFacade facade{3,
+                                   {{0, 2, EdgeWeight{10}, EdgeDuration{100}, true, false},
+                                    {1, 2, EdgeWeight{20}, EdgeDuration{50}, false, true}}};
+    const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    const auto first = phastOneToAllSearch(facade, {source}, {150});
+    const auto second = phastOneToAllSearch(facade, {source}, {150});
+
+    BOOST_REQUIRE(first.isComplete());
+    BOOST_REQUIRE(second.isComplete());
+    BOOST_CHECK_EQUAL(facade.GetIsochroneTopologicalOrderBuildCount(), 1);
+
+    const SyntheticCHFacade replacement_facade{
+        3,
+        {{0, 2, EdgeWeight{10}, EdgeDuration{100}, true, false},
+         {1, 2, EdgeWeight{20}, EdgeDuration{50}, false, true}}};
+    const auto replacement_result = phastOneToAllSearch(replacement_facade, {source}, {150});
+
+    BOOST_REQUIRE(replacement_result.isComplete());
+    BOOST_CHECK_EQUAL(replacement_facade.GetIsochroneTopologicalOrderBuildCount(), 1);
+}
+
 BOOST_AUTO_TEST_CASE(virtual_source_seed_allows_forward_self_loop_reentry)
 {
     // The negative phantom seed is virtual.  The loop returns to the same edge-based node with a
@@ -284,47 +330,46 @@ BOOST_AUTO_TEST_CASE(applies_reverse_phantom_offsets_to_weight_and_duration_seed
     BOOST_CHECK_EQUAL(from_alias<int>(target->duration), 20);
 }
 
-BOOST_AUTO_TEST_CASE(searches_the_uncontracted_core)
+BOOST_AUTO_TEST_CASE(searches_an_uncontracted_core_before_sweeping_its_contracted_fringe)
 {
-    const SyntheticCHFacade facade{2,
-                                   {{0, 1, EdgeWeight{1}, EdgeDuration{1}, true, false},
-                                    {1, 0, EdgeWeight{1}, EdgeDuration{1}, true, false}}};
+    // Nodes 1 and 2 are the uncontracted core.  Backward arcs are physically stored in reverse,
+    // so the core search needs its cached reverse adjacency to traverse 1 -> 2 -> 1.  The arc at
+    // node 0 represents the downward edge 1 -> 0 that PHAST traverses after the core search.
+    const SyntheticCHFacade facade{3,
+                                   {{0, 1, EdgeWeight{5}, EdgeDuration{5}, false, true},
+                                    {1, 2, EdgeWeight{1}, EdgeDuration{1}, false, true},
+                                    {2, 1, EdgeWeight{1}, EdgeDuration{1}, false, true}}};
+    const auto source = makeSource(1, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
 
-    const auto result =
-        phastOneToAllSearch(facade, {makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {10});
+    const auto result = phastOneToAllSearch(facade, {source}, {10});
+    const auto repeated_result = phastOneToAllSearch(facade, {source}, {10});
 
     BOOST_REQUIRE(result.isComplete());
-    const auto *first = findNode(result, 1);
-    const auto *reentry = findNode(result, 0);
-    BOOST_REQUIRE(first != nullptr);
-    BOOST_REQUIRE(reentry != nullptr);
-    BOOST_CHECK_EQUAL(first->weight, EdgeWeight{1});
-    BOOST_CHECK_EQUAL(first->duration, EdgeDuration{1});
-    BOOST_CHECK_EQUAL(reentry->weight, EdgeWeight{2});
-    BOOST_CHECK_EQUAL(reentry->duration, EdgeDuration{2});
+    BOOST_REQUIRE(repeated_result.isComplete());
+    const auto *fringe = findNode(result, 0);
+    BOOST_REQUIRE(fringe != nullptr);
+    BOOST_CHECK_EQUAL(from_alias<int>(fringe->weight), 5);
+    BOOST_CHECK_EQUAL(from_alias<int>(fringe->duration), 5);
+    const auto *core_node = findNode(result, 2);
+    BOOST_REQUIRE(core_node != nullptr);
+    BOOST_CHECK_EQUAL(from_alias<int>(core_node->weight), 1);
+    BOOST_CHECK_EQUAL(from_alias<int>(core_node->duration), 1);
+    BOOST_CHECK_EQUAL(facade.GetIsochroneTopologicalOrderBuildCount(), 1);
 }
 
-BOOST_AUTO_TEST_CASE(searches_logical_backward_arcs_within_the_retained_core)
+BOOST_AUTO_TEST_CASE(rejects_an_invalid_ch_graph_once)
 {
-    // Kahn's residual has no PHAST rank.  The backward arc stored at node 1 represents the
-    // logical core edge 2 -> 1, so a core Dijkstra must read it as an incoming arc of node 2.
-    const SyntheticCHFacade facade{4,
-                                   {{1, 2, EdgeWeight{1}, EdgeDuration{1}, false, true},
-                                    {1, 3, EdgeWeight{1}, EdgeDuration{1}, true, false},
-                                    {3, 1, EdgeWeight{1}, EdgeDuration{1}, true, false}}};
+    const SyntheticCHFacade facade{1, {{0, 1, EdgeWeight{1}, EdgeDuration{1}, true, false}}};
+    const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
 
-    const auto result =
-        phastOneToAllSearch(facade, {makeSource(2, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {10});
+    const auto result = phastOneToAllSearch(facade, {source}, {10});
+    const auto repeated_result = phastOneToAllSearch(facade, {source}, {10});
 
-    BOOST_REQUIRE(result.isComplete());
-    const auto *first = findNode(result, 1);
-    const auto *second = findNode(result, 3);
-    BOOST_REQUIRE(first != nullptr);
-    BOOST_REQUIRE(second != nullptr);
-    BOOST_CHECK_EQUAL(first->weight, EdgeWeight{1});
-    BOOST_CHECK_EQUAL(first->duration, EdgeDuration{1});
-    BOOST_CHECK_EQUAL(second->weight, EdgeWeight{2});
-    BOOST_CHECK_EQUAL(second->duration, EdgeDuration{2});
+    BOOST_CHECK(result.status == IsochroneSearchStatus::UnsupportedCHGraph);
+    BOOST_CHECK(result.nodes.empty());
+    BOOST_CHECK(repeated_result.status == IsochroneSearchStatus::UnsupportedCHGraph);
+    BOOST_CHECK(repeated_result.nodes.empty());
+    BOOST_CHECK_EQUAL(facade.GetIsochroneTopologicalOrderBuildCount(), 1);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
