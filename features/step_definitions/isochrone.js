@@ -369,15 +369,19 @@ Then(
     const target = this.findNodeByName(targetName);
     assert.ok(source, `unknown expected source node "${sourceName}"`);
     assert.ok(target, `unknown expected target node "${targetName}"`);
+    const sourceLongitude = Number(source.lon);
+    const targetLongitude = Number(target.lon);
     assert.ok(
-      target.lon > source.lon,
+      targetLongitude > sourceLongitude,
       'interpolation acceptance test requires eastbound edge',
     );
 
     const geometry = this.isochroneResponse.json.features[0].geometry;
     const boundaryLongitude = maximumLongitude(geometry);
-    const oneQuarter = source.lon + (target.lon - source.lon) / 4;
-    const threeQuarters = source.lon + ((target.lon - source.lon) * 3) / 4;
+    const oneQuarter =
+      sourceLongitude + (targetLongitude - sourceLongitude) / 4;
+    const threeQuarters =
+      sourceLongitude + ((targetLongitude - sourceLongitude) * 3) / 4;
     assert.ok(
       boundaryLongitude > oneQuarter,
       `expected cutoff geometry to progress past ${oneQuarter}, got ${boundaryLongitude}`,

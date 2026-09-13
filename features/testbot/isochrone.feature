@@ -64,7 +64,7 @@ Feature: Isochrone service
             | b    | 1.02 | 1   |
         And the ways
             | nodes | duration |
-            | ab    | 20       |
+            | ab    | 0:00:20  |
 
         When I request an isochrone from "a" with contours_seconds "10"
         Then the isochrone response should be a GeoJSON FeatureCollection with "1" "MultiPolygon" features
