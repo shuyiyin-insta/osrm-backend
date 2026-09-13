@@ -181,6 +181,38 @@ BOOST_AUTO_TEST_CASE(outbound_upward_search_does_not_follow_backward_ch_arcs)
     BOOST_CHECK(findNode(result, 1) == nullptr);
 }
 
+BOOST_AUTO_TEST_CASE(virtual_source_seed_allows_forward_self_loop_reentry)
+{
+    // The negative phantom seed is virtual.  The loop returns to the same edge-based node with a
+    // normal network label, so it must not be suppressed by the already settled source seed.
+    const SyntheticCHFacade facade{1, {{0, 0, EdgeWeight{130}, EdgeDuration{130}, true, false}}};
+    const auto source = makeSource(0, EdgeWeight{80}, EdgeWeight{0}, {80}, {0});
+
+    const auto result = phastOneToAllSearch(facade, {source}, {60});
+
+    BOOST_REQUIRE(result.isComplete());
+    const auto *reentry = findNode(result, 0);
+    BOOST_REQUIRE(reentry != nullptr);
+    BOOST_CHECK_EQUAL(from_alias<int>(reentry->weight), 50);
+    BOOST_CHECK_EQUAL(from_alias<int>(reentry->duration), 50);
+}
+
+BOOST_AUTO_TEST_CASE(virtual_source_seed_allows_downward_self_loop_reentry)
+{
+    // A backward CH arc is traversed by the PHAST downward sweep.  Self-loops still represent a
+    // real network re-entry and must not be skipped merely because both ranked endpoints match.
+    const SyntheticCHFacade facade{1, {{0, 0, EdgeWeight{130}, EdgeDuration{130}, false, true}}};
+    const auto source = makeSource(0, EdgeWeight{80}, EdgeWeight{0}, {80}, {0});
+
+    const auto result = phastOneToAllSearch(facade, {source}, {60});
+
+    BOOST_REQUIRE(result.isComplete());
+    const auto *reentry = findNode(result, 0);
+    BOOST_REQUIRE(reentry != nullptr);
+    BOOST_CHECK_EQUAL(from_alias<int>(reentry->weight), 50);
+    BOOST_CHECK_EQUAL(from_alias<int>(reentry->duration), 50);
+}
+
 BOOST_AUTO_TEST_CASE(uses_weight_optimal_path_and_carries_its_duration)
 {
     // The route through node 1 is quicker but has a higher configured profile weight.  The CH
