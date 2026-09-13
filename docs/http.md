@@ -276,8 +276,8 @@ Two coordinates (`13.388860,52.517037;0,0?number=1`), where the second coordinat
 ### Isochrone service
 
 Computes the region reachable from one coordinate within one or more elapsed-duration contours.
-The search minimizes the profile's total routing weight and, among equal-weight paths, elapsed
-duration. Contours are applied to that selected elapsed duration.
+The search minimizes the profile's total routing weight. Contours are applied to the elapsed
+duration carried by the selected path.
 
 ```endpoint
 GET /isochrone/v1/{profile}/{longitude},{latitude}?contours_seconds={seconds}[,{seconds}...]&direction={outbound|inbound}&polygons={true|false}&generalize={metres}&denoise={ratio}
