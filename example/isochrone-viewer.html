@@ -1,320 +1,381 @@
-<!DOCTYPE html>
-<html>
-
-<head>
-    <meta charset='utf-8' />
-    <title></title>
-    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="initial-scale=1,maximum-scale=1,user-scalable=no"
+    />
+    <title>OSRM isochrone viewer</title>
     <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
-    <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet" />
+    <link
+      href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css"
+      rel="stylesheet"
+    />
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-        }
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: sans-serif;
+      }
 
-        #map {
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            width: 100%;
-        }
+      #map {
+        position: absolute;
+        inset: 0;
+      }
 
-        #controls {
-            position: absolute;
-            top: 12px;
-            left: 12px;
-            z-index: 2;
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 4px;
-            padding: 10px 12px;
-            font-family: sans-serif;
-            font-size: 13px;
-        }
+      #controls {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        z-index: 1;
+        max-width: 290px;
+        padding: 12px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.95);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+        font-size: 13px;
+      }
 
-        #range-value {
-            font-weight: bold;
-        }
+      #controls label,
+      #controls input,
+      #controls select {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        margin: 5px 0 9px;
+      }
+
+      #controls input[type='checkbox'] {
+        display: inline-block;
+        width: auto;
+        margin: 0 5px 0 0;
+        vertical-align: middle;
+      }
+
+      #range-value {
+        font-weight: bold;
+      }
+
+      #status {
+        margin: 3px 0 0;
+        line-height: 1.35;
+      }
+
+      .hint {
+        margin: 0 0 10px;
+        color: #4b5563;
+        line-height: 1.35;
+      }
     </style>
-    <style type='text/css'>
-        #info {
-            display: block;
-            position: relative;
-            margin: 0px auto;
-            width: 50%;
-            padding: 10px;
-            border: none;
-            border-radius: 3px;
-            font-size: 12px;
-            text-align: center;
-            color: #222;
-            background: #fff;
-        }
-    </style>
-</head>
-
-<body>
-
-    <div id='map'></div>
+  </head>
+  <body>
+    <div id="map"></div>
     <div id="controls">
-        <label for="range-slider">Range (seconds): <span id="range-value">900</span></label><br />
-        <input id="range-slider" type="range" min="60" max="1800" step="30" value="900" />
+      <label for="server-url">OSRM server</label>
+      <input
+        id="server-url"
+        type="url"
+        value="http://localhost:5000"
+        autocomplete="off"
+      />
+
+      <label for="range-slider"
+        >Contour duration: <span id="range-value">900</span> seconds</label
+      >
+      <input
+        id="range-slider"
+        type="range"
+        min="60"
+        max="1800"
+        step="30"
+        value="900"
+      />
+
+      <label for="direction">Direction</label>
+      <select id="direction">
+        <option value="outbound" selected>
+          Outbound: reachable from point
+        </option>
+        <option value="inbound">Inbound: can reach point</option>
+      </select>
+
+      <label for="polygons">
+        <input id="polygons" type="checkbox" checked />
+        Return polygons
+      </label>
+
+      <p class="hint">
+        Click the map to request an isochrone. The initial point is San
+        Francisco.
+      </p>
+      <div id="status" aria-live="polite">Waiting for the map.</div>
     </div>
-    <div id="info"></div>
+
     <script>
-        var currentController = null;
-        var lastClickedLngLat = null;
-        var slider = document.getElementById('range-slider');
-        var rangeValue = document.getElementById('range-value');
+      'use strict';
 
-        function updateRangeLabel() {
-            rangeValue.textContent = slider.value;
+      var DEFAULT_CENTER = [-122.39632, 37.79112];
+      var map;
+      var marker;
+      var currentController;
+      var lastClickedLngLat;
+
+      var serverUrlInput = document.getElementById('server-url');
+      var slider = document.getElementById('range-slider');
+      var rangeValue = document.getElementById('range-value');
+      var directionSelect = document.getElementById('direction');
+      var polygonsCheckbox = document.getElementById('polygons');
+      var status = document.getElementById('status');
+
+      function setStatus(message) {
+        status.textContent = message;
+      }
+
+      function updateRangeLabel() {
+        rangeValue.textContent = slider.value;
+      }
+
+      function isCoordinate(value) {
+        return (
+          Array.isArray(value) &&
+          value.length >= 2 &&
+          Number.isFinite(Number(value[0])) &&
+          Number.isFinite(Number(value[1]))
+        );
+      }
+
+      function extendBounds(bounds, coordinates) {
+        if (!Array.isArray(coordinates)) {
+          return false;
+        }
+        if (isCoordinate(coordinates)) {
+          bounds.extend([Number(coordinates[0]), Number(coordinates[1])]);
+          return true;
+        }
+        var hasCoordinates = false;
+        coordinates.forEach(function (coordinate) {
+          hasCoordinates = extendBounds(bounds, coordinate) || hasCoordinates;
+        });
+        return hasCoordinates;
+      }
+
+      function getFeatureBounds(features) {
+        var bounds = new maplibregl.LngLatBounds();
+        var hasCoordinates = false;
+
+        features.forEach(function (feature) {
+          if (!feature || !feature.geometry) {
+            return;
+          }
+          hasCoordinates =
+            extendBounds(bounds, feature.geometry.coordinates) ||
+            hasCoordinates;
+        });
+
+        return hasCoordinates && !bounds.isEmpty() ? bounds : null;
+      }
+
+      function describeFeatures(features) {
+        var counts = {};
+        features.forEach(function (feature) {
+          var geometry = feature && feature.geometry;
+          var type = geometry && geometry.type ? geometry.type : 'invalid';
+          counts[type] = (counts[type] || 0) + 1;
+        });
+
+        return Object.keys(counts)
+          .sort()
+          .map(function (type) {
+            return counts[type] + ' ' + type;
+          })
+          .join(', ');
+      }
+
+      function ensureLayers() {
+        if (!map.getLayer('isochrone-fill')) {
+          map.addLayer({
+            id: 'isochrone-fill',
+            type: 'fill',
+            source: 'isochrone',
+            filter: ['==', '$type', 'Polygon'],
+            paint: {
+              'fill-color': '#2563eb',
+              'fill-opacity': 0.23,
+            },
+          });
+        }
+        if (!map.getLayer('isochrone-polygon-outline')) {
+          map.addLayer({
+            id: 'isochrone-polygon-outline',
+            type: 'line',
+            source: 'isochrone',
+            filter: ['==', '$type', 'Polygon'],
+            paint: {
+              'line-color': '#1d4ed8',
+              'line-width': 2,
+              'line-opacity': 0.9,
+            },
+          });
+        }
+        if (!map.getLayer('isochrone-lines')) {
+          map.addLayer({
+            id: 'isochrone-lines',
+            type: 'line',
+            source: 'isochrone',
+            filter: ['==', '$type', 'LineString'],
+            paint: {
+              'line-color': '#1d4ed8',
+              'line-width': 2,
+              'line-opacity': 0.9,
+            },
+          });
+        }
+      }
+
+      function renderIsochrone(data) {
+        if (
+          !data ||
+          data.type !== 'FeatureCollection' ||
+          !Array.isArray(data.features)
+        ) {
+          throw new Error('OSRM did not return a GeoJSON FeatureCollection');
         }
 
-        function clamp01(value) {
-            return Math.max(0, Math.min(1, value));
+        if (!map.getSource('isochrone')) {
+          map.addSource('isochrone', {
+            type: 'geojson',
+            data: data,
+          });
+          ensureLayers();
+        } else {
+          map.getSource('isochrone').setData(data);
         }
 
-        function normalizeIsochroneData(data, maxWeight) {
-            var features = (data && data.features) ? data.features : [];
-            return {
-                type: "FeatureCollection",
-                max_range: data.max_range,
-                features: features.map(function (feature) {
-                    var weight = Number(feature.properties && feature.properties.weight);
-                    if (!Number.isFinite(weight)) {
-                        weight = 0;
-                    }
-                    var ratio = clamp01(weight / maxWeight);
-                    return {
-                        type: feature.type,
-                        geometry: feature.geometry,
-                        properties: Object.assign({}, feature.properties, {
-                            weight: weight,
-                            weight_ratio: ratio
-                        })
-                    };
-                })
-            };
+        var bounds = getFeatureBounds(data.features);
+        if (bounds) {
+          map.fitBounds(bounds, { padding: 48, duration: 250, maxZoom: 15 });
         }
 
-        function getBoundsForFeatures(features) {
-            var minLng = Infinity;
-            var minLat = Infinity;
-            var maxLng = -Infinity;
-            var maxLat = -Infinity;
-            var hasCoordinates = false;
+        setStatus(
+          'Received ' +
+            data.features.length +
+            ' contour feature(s): ' +
+            describeFeatures(data.features) +
+            '.',
+        );
+      }
 
-            function includeCoordinate(coord) {
-                if (!coord || coord.length < 2) {
-                    return;
-                }
-                var lng = Number(coord[0]);
-                var lat = Number(coord[1]);
-                if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
-                    return;
-                }
-                minLng = Math.min(minLng, lng);
-                minLat = Math.min(minLat, lat);
-                maxLng = Math.max(maxLng, lng);
-                maxLat = Math.max(maxLat, lat);
-                hasCoordinates = true;
-            }
-
-            features.forEach(function (feature) {
-                if (!feature || !feature.geometry) {
-                    return;
-                }
-                var geometry = feature.geometry;
-                if (geometry.type === "Point") {
-                    includeCoordinate(geometry.coordinates);
-                } else if (geometry.type === "LineString" && Array.isArray(geometry.coordinates)) {
-                    geometry.coordinates.forEach(includeCoordinate);
-                }
-            });
-
-            if (!hasCoordinates) {
-                return null;
-            }
-            return [[minLng, minLat], [maxLng, maxLat]];
+      function isochroneUrl(lngLat) {
+        var serverUrl = serverUrlInput.value.replace(/\/+$/, '');
+        if (!serverUrl) {
+          throw new Error('Enter an OSRM server URL');
         }
 
-        function boundsFitViewport(bounds) {
-            if (!bounds || !map || !map.getBounds) {
-                return false;
-            }
+        var parameters = new URLSearchParams({
+          contours_seconds: slider.value,
+          direction: directionSelect.value,
+          polygons: polygonsCheckbox.checked ? 'true' : 'false',
+        });
 
-            var currentBounds = map.getBounds();
-            return currentBounds.contains(bounds[0]) && currentBounds.contains(bounds[1]);
+        return (
+          serverUrl +
+          '/isochrone/v1/driving/' +
+          lngLat.lng.toFixed(7) +
+          ',' +
+          lngLat.lat.toFixed(7) +
+          '?' +
+          parameters.toString()
+        );
+      }
+
+      function requestIsochrone(lngLat) {
+        if (currentController) {
+          currentController.abort();
         }
-
-        function renderIsochrone(j) {
-            var maxRangeSeconds = Number(j.max_range);
-            if (!Number.isFinite(maxRangeSeconds) || maxRangeSeconds <= 0) {
-                maxRangeSeconds = Number(slider.value);
-            }
-            var maxWeight = Math.max(1, maxRangeSeconds * 10);
-            var normalizedData = normalizeIsochroneData(j, maxWeight);
-            var features = normalizedData.features || [];
-            var lineFeatureCount = features.filter(function (f) {
-                return f.geometry && f.geometry.type === "LineString";
-            }).length;
-            var pointFeatureCount = features.filter(function (f) {
-                return f.geometry && f.geometry.type === "Point";
-            }).length;
-
-            if (map.getSource("isochrone")) {
-                map.getSource("isochrone").setData(normalizedData);
-            } else {
-                map.addSource("isochrone", {
-                    "type": "geojson",
-                    "data": normalizedData
-                });
-            }
-
-            if (!map.getLayer("isochrone-edges")) {
-                map.addLayer({
-                    "id": "isochrone-edges",
-                    "type": "line",
-                    "source": "isochrone",
-                    "filter": ["==", ["geometry-type"], "LineString"],
-                    "paint": {
-                        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.8, 14, 3.5],
-                        "line-opacity": ["interpolate", ["linear"], ["zoom"], 8, 0.65, 14, 0.9],
-                        "line-color": [
-                            "interpolate", ["linear"], ["get", "weight_ratio"],
-                            0.0, "#313695",
-                            0.2, "#4575b4",
-                            0.4, "#74add1",
-                            0.6, "#fdae61",
-                            0.8, "#f46d43",
-                            1.0, "#a50026"
-                        ],
-                        "line-blur": 0.1
-                    }
-                });
-            }
-            if (!map.getLayer("isochrone-points")) {
-                map.addLayer({
-                    "id": "isochrone-points",
-                    "type": "circle",
-                    "source": "isochrone",
-                    "filter": ["==", ["geometry-type"], "Point"],
-                    "paint": {
-                        "circle-radius": 2.5,
-                        "circle-color": [
-                            "interpolate", ["linear"], ["get", "weight_ratio"],
-                            0.0, "#313695",
-                            0.2, "#4575b4",
-                            0.4, "#74add1",
-                            0.6, "#fdae61",
-                            0.8, "#f46d43",
-                            1.0, "#a50026"
-                        ],
-                        "circle-opacity": 0.9
-                    }
-                });
-            }
-            map.setPaintProperty("isochrone-edges", "line-color", [
-                "interpolate", ["linear"], ["get", "weight_ratio"],
-                0.0, "#313695",
-                0.2, "#4575b4",
-                0.4, "#74add1",
-                0.6, "#fdae61",
-                0.8, "#f46d43",
-                1.0, "#a50026"
-            ]);
-            map.setPaintProperty("isochrone-points", "circle-color", [
-                "interpolate", ["linear"], ["get", "weight_ratio"],
-                0.0, "#313695",
-                0.2, "#4575b4",
-                0.4, "#74add1",
-                0.6, "#fdae61",
-                0.8, "#f46d43",
-                1.0, "#a50026"
-            ]);
-
-            var bounds = getBoundsForFeatures(features);
-            if (bounds && !boundsFitViewport(bounds)) {
-                map.fitBounds(bounds, { padding: 30, duration: 250, maxZoom: 15 });
-            }
-
-            document.getElementById('info').innerHTML =
-                "features: " + features.length +
-                " (lines: " + lineFeatureCount + ", points: " + pointFeatureCount + ")" +
-                "<br />max range: " + maxRangeSeconds + " s";
-        }
-
-        function requestIsochrone(lngLat) {
-            if (currentController) {
-                currentController.abort();
-            }
-            currentController = new AbortController();
-            var range = slider.value;
-            updateRangeLabel();
-
-            var url = "http://localhost:5000/isochrone/v1/driving/" +
-                lngLat.lng + "," + lngLat.lat + ".json?range=" + encodeURIComponent(range);
-
-            fetch(url, { signal: currentController.signal })
-                .then(function (response) {
-                    if (!response.ok) {
-                        throw new Error("HTTP " + response.status);
-                    }
-                    return response.text();
-                })
-                .then(function (body) {
-                    var json = JSON.parse(body);
-                    if (json && json.code && json.code !== "Ok") {
-                        throw new Error((json.message || json.code));
-                    }
-                    renderIsochrone(json);
-                })
-                .catch(function (error) {
-                    if (error.name !== "AbortError") {
-                        console.error(error);
-                        document.getElementById('info').innerHTML = "isochrone request failed: " + error.message;
-                    }
-                });
-        }
-
+        currentController = new AbortController();
         updateRangeLabel();
 
-        var map = new maplibregl.Map({
-            container: 'map',
-            style: 'https://pnorman.github.io/tilekiln-shortbread-demo/colorful.json',
-            center: [8.682127, 50.110924],
-            zoom: 13
-        });
+        var url;
+        try {
+          url = isochroneUrl(lngLat);
+        } catch (error) {
+          setStatus(error.message);
+          return;
+        }
 
-
-        map.on('mousemove', function (e) {
-            var formattedLngLat = {
-                lng: e.lngLat.lng.toFixed(7),
-                lat: e.lngLat.lat.toFixed(7)
-            };
-            document.getElementById('info').innerHTML =
-                // e.point is the x, y coordinates of the mousemove event relative
-                // to the top-left corner of the map
-                JSON.stringify(e.point) + '<br />' +
-                // e.lngLat is the longitude, latitude geographical position of the event
-                JSON.stringify(formattedLngLat);
-        });
-
-        map.on('click', function (e) {
-            console.log(JSON.stringify(e.lngLat));
-            lastClickedLngLat = e.lngLat;
-            requestIsochrone(lastClickedLngLat);
-        });
-
-        slider.addEventListener('input', function () {
-            updateRangeLabel();
-            if (lastClickedLngLat) {
-                requestIsochrone(lastClickedLngLat);
+        setStatus(
+          'Requesting ' +
+            slider.value +
+            ' second ' +
+            directionSelect.value +
+            ' contour…',
+        );
+        fetch(url, { signal: currentController.signal })
+          .then(function (response) {
+            return response.text().then(function (body) {
+              var json;
+              try {
+                json = JSON.parse(body);
+              } catch (error) {
+                throw new Error(
+                  'OSRM returned invalid JSON (HTTP ' + response.status + ')',
+                );
+              }
+              if (!response.ok || (json.code && json.code !== 'Ok')) {
+                throw new Error(
+                  json.message || json.code || 'HTTP ' + response.status,
+                );
+              }
+              return json;
+            });
+          })
+          .then(renderIsochrone)
+          .catch(function (error) {
+            if (error.name !== 'AbortError') {
+              console.error(error);
+              setStatus('Isochrone request failed: ' + error.message);
             }
-        });
+          });
+      }
+
+      function updateIsochrone() {
+        if (lastClickedLngLat) {
+          requestIsochrone(lastClickedLngLat);
+        }
+      }
+
+      updateRangeLabel();
+
+      map = new maplibregl.Map({
+        container: 'map',
+        style:
+          'https://pnorman.github.io/tilekiln-shortbread-demo/colorful.json',
+        center: DEFAULT_CENTER,
+        zoom: 13,
+      });
+
+      map.on('load', function () {
+        lastClickedLngLat = new maplibregl.LngLat(
+          DEFAULT_CENTER[0],
+          DEFAULT_CENTER[1],
+        );
+        marker = new maplibregl.Marker({ color: '#111827' })
+          .setLngLat(lastClickedLngLat)
+          .addTo(map);
+        requestIsochrone(lastClickedLngLat);
+      });
+
+      map.on('click', function (event) {
+        lastClickedLngLat = event.lngLat;
+        marker.setLngLat(lastClickedLngLat);
+        requestIsochrone(lastClickedLngLat);
+      });
+
+      slider.addEventListener('input', updateIsochrone);
+      directionSelect.addEventListener('change', updateIsochrone);
+      polygonsCheckbox.addEventListener('change', updateIsochrone);
+      serverUrlInput.addEventListener('change', updateIsochrone);
     </script>
-
-</body>
-
+  </body>
 </html>
