@@ -21,7 +21,11 @@ class NativeResultFacade final : public osrm::test::MockBaseDataFacade
     }
 
     GeometryID GetGeometryIndex(const NodeID node) const override
-    { return {static_cast<PackedGeometryID>(node / 2), node % 2 == 0}; }
+    {
+        if (node == 99)
+            return {SPECIAL_GEOMETRYID, false};
+        return {static_cast<PackedGeometryID>(node / 2), node % 2 == 0};
+    }
 
     DurationForwardRange GetUncompressedForwardDurations(const PackedGeometryID) const override
     { return {durations.begin(), durations.end()}; }
@@ -83,6 +87,21 @@ BOOST_AUTO_TEST_CASE(enforces_the_retained_search_record_limit)
 
     BOOST_CHECK(result.status ==
                 osrm::engine::isochrone::SearchStatus::SearchRecordLimitReached);
+}
+
+BOOST_AUTO_TEST_CASE(skips_native_labels_without_materializable_geometry)
+{
+    const NativeResultFacade facade;
+    osrm::engine::routing_algorithms::ReachabilitySearchResult native_result;
+    native_result.nodes.push_back({99, EdgeWeight{1}, EdgeDuration{1}});
+    native_result.nodes.push_back({0, EdgeWeight{10}, EdgeDuration{50}});
+
+    const auto result = osrm::engine::isochrone::makeNativeSearchResult(
+        facade, native_result, {}, EdgeDuration{100}, 10, false);
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 1);
+    BOOST_CHECK_EQUAL(result.nodes.front().node, 0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

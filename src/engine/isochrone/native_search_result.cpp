@@ -172,9 +172,7 @@ SearchResult makeNativeSearchResult(
             if (*intersects)
             {
                 const auto geometry = facade.GetGeometryIndex(label.node);
-                if (geometry.id == SPECIAL_GEOMETRYID)
-                    result.status = SearchStatus::ArithmeticOverflow;
-                else
+                if (geometry.id != SPECIAL_GEOMETRYID)
                     candidate_geometries.insert(geometry.id);
             }
         });

@@ -58,10 +58,13 @@ Status IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorith
 
     const PhantomNodeCandidates source_candidates{phantom_nodes.front().front().phantom_node};
     const auto search_result =
-        algorithms.IsochroneSearch(source_candidates, duration_threshold, false);
+        algorithms.IsochroneSearch(
+            source_candidates, duration_threshold, false, MAX_SEARCH_NODES);
     if (search_result.status == routing_algorithms::ReachabilitySearchStatus::UnsupportedGraph)
         return Error(
             "NotImplemented", "The loaded graph does not support isochrone search.", result);
+    if (search_result.status == routing_algorithms::ReachabilitySearchStatus::SearchNodeLimitReached)
+        return Error("TooBig", "Isochrone search exceeds the configured node limit.", result);
     if (search_result.status == routing_algorithms::ReachabilitySearchStatus::ArithmeticOverflow)
         return Error("InvalidValue", "Isochrone metric arithmetic overflowed.", result);
 

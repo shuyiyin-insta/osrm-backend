@@ -22,6 +22,7 @@ class IsochronePlugin final : public BasePlugin
                          osrm::engine::api::ResultT &result) const;
 
   private:
+    static constexpr std::size_t MAX_SEARCH_NODES = 10'000'000;
     static constexpr std::size_t MAX_SEARCH_RECORDS = 100'000;
     static constexpr std::size_t MAX_MATERIALIZED_POINTS = 1'000'000;
     static constexpr std::size_t MAX_RASTERIZATION_STEPS = 5'000'000;

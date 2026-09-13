@@ -10,6 +10,7 @@
 
 #include <boost/assert.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <tuple>
@@ -21,6 +22,7 @@ namespace osrm::engine::routing_algorithms::ch
 enum class IsochroneSearchStatus : std::uint8_t
 {
     Complete,
+    SearchNodeLimitReached,
     // The filtered CH graph has an invalid edge endpoint and cannot be searched.
     UnsupportedCHGraph,
     ArithmeticOverflow
@@ -422,10 +424,18 @@ bool runDownwardSweep(const CHFacade &facade,
 template <bool FORWARD_SEARCH = true, typename CHFacade>
 IsochroneSearchResult phastOneToAllSearch(const CHFacade &facade,
                                           const PhantomNodeCandidates &endpoint_candidates,
-                                          const EdgeDuration duration_cutoff)
+                                          const EdgeDuration duration_cutoff,
+                                          const std::size_t maximum_search_nodes =
+                                              std::numeric_limits<std::size_t>::max())
 {
     IsochroneSearchResult result;
     BOOST_ASSERT(duration_cutoff >= EdgeDuration{0});
+
+    if (facade.GetNumberOfNodes() > maximum_search_nodes)
+    {
+        result.status = IsochroneSearchStatus::SearchNodeLimitReached;
+        return result;
+    }
 
     const auto *order = facade.GetIsochroneTopologicalOrder();
     if (order == nullptr)
