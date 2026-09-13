@@ -157,6 +157,43 @@ PhantomNode makeReverseSource(const NodeID node,
                        0};
 }
 
+PhantomNode makeTarget(const NodeID node,
+                       const EdgeWeight weight,
+                       const EdgeWeight weight_offset,
+                       const EdgeDuration duration,
+                       const EdgeDuration duration_offset)
+{
+    struct Segment
+    {
+        SegmentID forward_segment_id;
+        SegmentID reverse_segment_id;
+        unsigned short fwd_segment_position;
+    } segment{{node, true}, {SPECIAL_SEGMENTID, false}, 0};
+
+    const util::Coordinate coordinate{util::FixedLongitude{0}, util::FixedLatitude{0}};
+    return PhantomNode{segment,
+                       ComponentID{1, false},
+                       weight,
+                       INVALID_EDGE_WEIGHT,
+                       weight_offset,
+                       EdgeWeight{0},
+                       EdgeDistance{0},
+                       INVALID_EDGE_DISTANCE,
+                       EdgeDistance{0},
+                       EdgeDistance{0},
+                       duration,
+                       MAXIMAL_EDGE_DURATION,
+                       duration_offset,
+                       EdgeDuration{0},
+                       false,
+                       true,
+                       false,
+                       false,
+                       coordinate,
+                       coordinate,
+                       0};
+}
+
 const IsochroneSearchNode *findNode(const IsochroneSearchResult &result, const NodeID node)
 {
     const auto found =
@@ -198,6 +235,39 @@ BOOST_AUTO_TEST_CASE(outbound_upward_search_does_not_follow_backward_ch_arcs)
 
     const auto result =
         phastOneToAllSearch(facade, {makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {100});
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_CHECK(findNode(result, 1) == nullptr);
+}
+
+BOOST_AUTO_TEST_CASE(inbound_phast_swaps_the_upward_and_downward_ch_arcs)
+{
+    // In the original graph the path is 1 -> 2 -> 0.  Reverse search from target 0 first follows
+    // the stored backward arc upward, then the stored forward arc downward.
+    const SyntheticCHFacade facade{3,
+                                   {{0, 2, EdgeWeight{10}, EdgeDuration{100}, false, true},
+                                    {1, 2, EdgeWeight{20}, EdgeDuration{50}, true, false}}};
+
+    const auto result = phastOneToAllSearch<false>(
+        facade, {makeTarget(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {150});
+
+    BOOST_REQUIRE(result.isComplete());
+    const auto *high = findNode(result, 2);
+    const auto *downward = findNode(result, 1);
+    BOOST_REQUIRE(high != nullptr);
+    BOOST_REQUIRE(downward != nullptr);
+    BOOST_CHECK_EQUAL(from_alias<int>(high->weight), 10);
+    BOOST_CHECK_EQUAL(from_alias<int>(high->duration), 100);
+    BOOST_CHECK_EQUAL(from_alias<int>(downward->weight), 30);
+    BOOST_CHECK_EQUAL(from_alias<int>(downward->duration), 150);
+}
+
+BOOST_AUTO_TEST_CASE(inbound_search_does_not_follow_forward_arcs_upward)
+{
+    const SyntheticCHFacade facade{2, {{0, 1, EdgeWeight{10}, EdgeDuration{10}, true, false}}};
+
+    const auto result = phastOneToAllSearch<false>(
+        facade, {makeTarget(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {100});
 
     BOOST_REQUIRE(result.isComplete());
     BOOST_CHECK(findNode(result, 1) == nullptr);
@@ -355,6 +425,29 @@ BOOST_AUTO_TEST_CASE(searches_an_uncontracted_core_before_sweeping_its_contracte
     BOOST_CHECK_EQUAL(from_alias<int>(core_node->weight), 1);
     BOOST_CHECK_EQUAL(from_alias<int>(core_node->duration), 1);
     BOOST_CHECK_EQUAL(facade.GetIsochroneTopologicalOrderBuildCount(), 1);
+}
+
+BOOST_AUTO_TEST_CASE(inbound_searches_forward_arcs_in_reverse_through_an_uncontracted_core)
+{
+    // Original forward core arcs form 1 -> 2 -> 1.  An inbound search traverses their cached
+    // reverse adjacency, then the stored forward fringe arc as a downward reverse edge.
+    const SyntheticCHFacade facade{3,
+                                   {{0, 1, EdgeWeight{5}, EdgeDuration{5}, true, false},
+                                    {1, 2, EdgeWeight{1}, EdgeDuration{1}, true, false},
+                                    {2, 1, EdgeWeight{1}, EdgeDuration{1}, true, false}}};
+    const auto target = makeTarget(1, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    const auto result = phastOneToAllSearch<false>(facade, {target}, {10});
+
+    BOOST_REQUIRE(result.isComplete());
+    const auto *fringe = findNode(result, 0);
+    BOOST_REQUIRE(fringe != nullptr);
+    BOOST_CHECK_EQUAL(from_alias<int>(fringe->weight), 5);
+    BOOST_CHECK_EQUAL(from_alias<int>(fringe->duration), 5);
+    const auto *core_node = findNode(result, 2);
+    BOOST_REQUIRE(core_node != nullptr);
+    BOOST_CHECK_EQUAL(from_alias<int>(core_node->weight), 1);
+    BOOST_CHECK_EQUAL(from_alias<int>(core_node->duration), 1);
 }
 
 BOOST_AUTO_TEST_CASE(rejects_an_invalid_ch_graph_once)
