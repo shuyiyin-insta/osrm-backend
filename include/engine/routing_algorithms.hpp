@@ -51,7 +51,8 @@ class RoutingAlgorithmsInterface
 
     virtual routing_algorithms::ReachabilitySearchResult
     IsochroneSearch(const PhantomNodeCandidates &source_candidates,
-                    EdgeDuration duration_cutoff) const = 0;
+                    EdgeDuration duration_cutoff,
+                    bool inbound) const = 0;
 
     virtual const DataFacadeBase &GetFacade() const = 0;
 
@@ -109,7 +110,8 @@ class RoutingAlgorithms final : public RoutingAlgorithmsInterface
 
     routing_algorithms::ReachabilitySearchResult
     IsochroneSearch(const PhantomNodeCandidates &source_candidates,
-                    EdgeDuration duration_cutoff) const final override;
+                    EdgeDuration duration_cutoff,
+                    bool inbound) const final override;
 
     const DataFacadeBase &GetFacade() const final override { return *facade; }
 
@@ -224,10 +226,11 @@ inline std::vector<routing_algorithms::TurnData> RoutingAlgorithms<Algorithm>::G
 template <routing_algorithms::RoutingAlgorithm Algorithm>
 routing_algorithms::ReachabilitySearchResult
 RoutingAlgorithms<Algorithm>::IsochroneSearch(const PhantomNodeCandidates &source_candidates,
-                                              const EdgeDuration duration_cutoff) const
+                                              const EdgeDuration duration_cutoff,
+                                              const bool inbound) const
 {
     return routing_algorithms::reachabilitySearch(
-        heaps, *facade, source_candidates, duration_cutoff);
+        heaps, *facade, source_candidates, duration_cutoff, inbound);
 }
 
 } // namespace osrm::engine

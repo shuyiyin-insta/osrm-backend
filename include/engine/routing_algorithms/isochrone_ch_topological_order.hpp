@@ -28,11 +28,22 @@ struct IsochroneCHTopologicalOrder
         EdgeDuration duration;
     };
 
+    struct CoreForwardEdge
+    {
+        NodeID source;
+        EdgeWeight weight;
+        EdgeDuration duration;
+    };
+
     // A backward CH arc is physically stored as source -> target, but logically traversed as
     // target -> source.  These offsets index reverse adjacency for arcs whose endpoints are
     // both in the uncontracted core.
     std::vector<unsigned> core_backward_edge_offsets;
     std::vector<CoreBackwardEdge> core_backward_edges;
+    // The inbound search traverses the original graph in reverse.  A stored forward arc then
+    // needs the same reverse adjacency that a stored backward arc needs for an outbound search.
+    std::vector<unsigned> core_forward_edge_offsets;
+    std::vector<CoreForwardEdge> core_forward_edges;
 
     bool isCoreNode(const NodeID node) const { return rank[node] >= nodes.size(); }
 
@@ -110,6 +121,7 @@ bool buildIsochroneCHTopologicalOrder(const CHFacade &facade, IsochroneCHTopolog
     }
 
     result.core_backward_edge_offsets.assign(number_of_core_nodes + 1, 0);
+    result.core_forward_edge_offsets.assign(number_of_core_nodes + 1, 0);
     for (const auto source : util::irange<NodeID>(0, number_of_nodes))
     {
         if (!result.isCoreNode(source))
@@ -121,14 +133,20 @@ bool buildIsochroneCHTopologicalOrder(const CHFacade &facade, IsochroneCHTopolog
             const auto target = facade.GetTarget(edge);
             if (data.backward && result.isCoreNode(target))
                 ++result.core_backward_edge_offsets[result.coreIndex(target) + 1];
+            if (data.forward && result.isCoreNode(target))
+                ++result.core_forward_edge_offsets[result.coreIndex(target) + 1];
         }
     }
 
     for (unsigned index = 1; index < result.core_backward_edge_offsets.size(); ++index)
         result.core_backward_edge_offsets[index] += result.core_backward_edge_offsets[index - 1];
+    for (unsigned index = 1; index < result.core_forward_edge_offsets.size(); ++index)
+        result.core_forward_edge_offsets[index] += result.core_forward_edge_offsets[index - 1];
 
     result.core_backward_edges.resize(result.core_backward_edge_offsets.back());
+    result.core_forward_edges.resize(result.core_forward_edge_offsets.back());
     auto next_core_backward_edge = result.core_backward_edge_offsets;
+    auto next_core_forward_edge = result.core_forward_edge_offsets;
     for (const auto source : util::irange<NodeID>(0, number_of_nodes))
     {
         if (!result.isCoreNode(source))
@@ -142,6 +160,12 @@ bool buildIsochroneCHTopologicalOrder(const CHFacade &facade, IsochroneCHTopolog
             {
                 const auto index = result.coreIndex(target);
                 result.core_backward_edges[next_core_backward_edge[index]++] = {
+                    source, data.weight, to_alias<EdgeDuration>(data.duration)};
+            }
+            if (data.forward && result.isCoreNode(target))
+            {
+                const auto index = result.coreIndex(target);
+                result.core_forward_edges[next_core_forward_edge[index]++] = {
                     source, data.weight, to_alias<EdgeDuration>(data.duration)};
             }
         }

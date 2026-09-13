@@ -36,6 +36,7 @@ struct IsochroneSearchNode
 struct IsochroneSearchResult
 {
     std::vector<IsochroneSearchNode> nodes;
+    std::vector<IsochroneSearchNode> competitors;
     IsochroneSearchStatus status = IsochroneSearchStatus::Complete;
 
     bool isComplete() const { return status == IsochroneSearchStatus::Complete; }
@@ -156,31 +157,43 @@ inline bool insertSource(std::vector<IsochroneCHNodeLabel> &source_labels,
     return true;
 }
 
-template <typename CHFacade>
+template <bool FORWARD_SEARCH, typename CHFacade>
 bool initializeSources(IsochroneCHQueryHeap &heap,
                        std::vector<IsochroneCHNodeLabel> &source_labels,
-                       const PhantomNodeCandidates &source_candidates,
+                       const PhantomNodeCandidates &endpoint_candidates,
                        const CHFacade &facade)
 {
     const auto number_of_nodes = facade.GetNumberOfNodes();
-    for (const auto &source : source_candidates)
+    for (const auto &endpoint : endpoint_candidates)
     {
-        if (source.IsValidForwardSource())
+        const auto forward_is_valid = FORWARD_SEARCH ? endpoint.IsValidForwardSource()
+                                                     : endpoint.IsValidForwardTarget();
+        if (forward_is_valid)
         {
-            if (source.forward_segment_id.id >= number_of_nodes ||
+            const auto weight = FORWARD_SEARCH ? endpoint.GetForwardWeightAsSource()
+                                               : endpoint.GetForwardWeightAsTarget();
+            const auto duration = FORWARD_SEARCH ? endpoint.GetForwardDurationAsSource()
+                                                 : endpoint.GetForwardDurationAsTarget();
+            if (endpoint.forward_segment_id.id >= number_of_nodes ||
                 !insertSource(source_labels,
-                              source.forward_segment_id.id,
-                              source.GetForwardWeightAsSource(),
-                              source.GetForwardDurationAsSource()))
+                              endpoint.forward_segment_id.id,
+                              weight,
+                              duration))
                 return false;
         }
-        if (source.IsValidReverseSource())
+        const auto reverse_is_valid = FORWARD_SEARCH ? endpoint.IsValidReverseSource()
+                                                     : endpoint.IsValidReverseTarget();
+        if (reverse_is_valid)
         {
-            if (source.reverse_segment_id.id >= number_of_nodes ||
+            const auto weight = FORWARD_SEARCH ? endpoint.GetReverseWeightAsSource()
+                                               : endpoint.GetReverseWeightAsTarget();
+            const auto duration = FORWARD_SEARCH ? endpoint.GetReverseDurationAsSource()
+                                                 : endpoint.GetReverseDurationAsTarget();
+            if (endpoint.reverse_segment_id.id >= number_of_nodes ||
                 !insertSource(source_labels,
-                              source.reverse_segment_id.id,
-                              source.GetReverseWeightAsSource(),
-                              source.GetReverseDurationAsSource()))
+                              endpoint.reverse_segment_id.id,
+                              weight,
+                              duration))
                 return false;
         }
     }
@@ -197,7 +210,7 @@ bool initializeSources(IsochroneCHQueryHeap &heap,
         for (const auto edge : facade.GetAdjacentEdgeRange(source))
         {
             const auto &data = facade.GetEdgeData(edge);
-            if (!data.forward)
+            if (!(FORWARD_SEARCH ? data.forward : data.backward))
                 continue;
 
             BOOST_ASSERT(data.weight > EdgeWeight{0});
@@ -215,7 +228,7 @@ bool initializeSources(IsochroneCHQueryHeap &heap,
     return true;
 }
 
-template <typename CHFacade>
+template <bool FORWARD_SEARCH, typename CHFacade>
 bool runUpwardSearch(const CHFacade &facade, IsochroneCHQueryHeap &heap)
 {
     while (!heap.Empty())
@@ -226,7 +239,7 @@ bool runUpwardSearch(const CHFacade &facade, IsochroneCHQueryHeap &heap)
         for (const auto edge : facade.GetAdjacentEdgeRange(current.node))
         {
             const auto &data = facade.GetEdgeData(edge);
-            if (!data.forward)
+            if (!(FORWARD_SEARCH ? data.forward : data.backward))
                 continue;
 
             BOOST_ASSERT(data.weight > EdgeWeight{0});
@@ -281,7 +294,7 @@ inline bool relaxCoreLabel(const IsochroneCHNodeLabel &from,
     return true;
 }
 
-template <typename CHFacade>
+template <bool FORWARD_SEARCH, typename CHFacade>
 bool relaxCoreOutgoingEdges(const CHFacade &facade,
                             const IsochroneCHTopologicalOrder &order,
                             const NodeID source,
@@ -295,7 +308,7 @@ bool relaxCoreOutgoingEdges(const CHFacade &facade,
     {
         const auto &data = facade.GetEdgeData(edge);
         const auto target = facade.GetTarget(edge);
-        if (data.forward && order.isCoreNode(target) &&
+        if ((FORWARD_SEARCH ? data.forward : data.backward) && order.isCoreNode(target) &&
             !relaxCoreLabel(source_label,
                             data.weight,
                             to_alias<EdgeDuration>(data.duration),
@@ -305,24 +318,30 @@ bool relaxCoreOutgoingEdges(const CHFacade &facade,
             return false;
     }
 
-    const auto core_index = order.coreIndex(source);
-    for (auto index = order.core_backward_edge_offsets[core_index];
-         index < order.core_backward_edge_offsets[core_index + 1];
-         ++index)
+    const auto relax_reverse_edges = [&](const auto &offsets, const auto &edges)
     {
-        const auto &reverse_edge = order.core_backward_edges[index];
-        if (!relaxCoreLabel(source_label,
-                            reverse_edge.weight,
-                            reverse_edge.duration,
-                            reverse_edge.source,
-                            labels,
-                            heap))
-            return false;
-    }
-    return true;
+        const auto core_index = order.coreIndex(source);
+        for (auto index = offsets[core_index]; index < offsets[core_index + 1]; ++index)
+        {
+            const auto &reverse_edge = edges[index];
+            if (!relaxCoreLabel(source_label,
+                                reverse_edge.weight,
+                                reverse_edge.duration,
+                                reverse_edge.source,
+                                labels,
+                                heap))
+                return false;
+        }
+        return true;
+    };
+
+    if constexpr (FORWARD_SEARCH)
+        return relax_reverse_edges(order.core_backward_edge_offsets, order.core_backward_edges);
+    else
+        return relax_reverse_edges(order.core_forward_edge_offsets, order.core_forward_edges);
 }
 
-template <typename CHFacade>
+template <bool FORWARD_SEARCH, typename CHFacade>
 bool runCoreSearch(const CHFacade &facade,
                    const IsochroneCHTopologicalOrder &order,
                    const std::vector<IsochroneCHNodeLabel> &source_labels,
@@ -340,7 +359,7 @@ bool runCoreSearch(const CHFacade &facade,
     for (const auto node : util::irange<NodeID>(0, facade.GetNumberOfNodes()))
     {
         if (order.isCoreNode(node) && source_labels[node].reachable &&
-            !relaxCoreOutgoingEdges(
+            !relaxCoreOutgoingEdges<FORWARD_SEARCH>(
                 facade, order, node, source_labels[node], labels, heap))
             return false;
     }
@@ -350,14 +369,14 @@ bool runCoreSearch(const CHFacade &facade,
         const auto current = heap.DeleteMinGetHeapNode();
         const IsochroneCHNodeLabel current_label{
             current.weight, current.data.duration, true};
-        if (!relaxCoreOutgoingEdges(
+        if (!relaxCoreOutgoingEdges<FORWARD_SEARCH>(
                 facade, order, current.node, current_label, labels, heap))
             return false;
     }
     return true;
 }
 
-template <typename CHFacade>
+template <bool FORWARD_SEARCH, typename CHFacade>
 bool runDownwardSweep(const CHFacade &facade,
                       const IsochroneCHTopologicalOrder &order,
                       const std::vector<IsochroneCHNodeLabel> &source_labels,
@@ -369,7 +388,7 @@ bool runDownwardSweep(const CHFacade &facade,
         for (const auto edge : facade.GetAdjacentEdgeRange(lower))
         {
             const auto &data = facade.GetEdgeData(edge);
-            if (!data.backward)
+            if (!(FORWARD_SEARCH ? data.backward : data.forward))
                 continue;
 
             const auto higher = facade.GetTarget(edge);
@@ -400,9 +419,9 @@ bool runDownwardSweep(const CHFacade &facade,
 // describes the source partial.  Labels are selected by profile weight and retain the duration of
 // that selected CH path.  The cutoff filters final labels only, because a lower-weight label above
 // the duration cutoff can still suppress a higher-weight, shorter-duration candidate downstream.
-template <typename CHFacade>
+template <bool FORWARD_SEARCH = true, typename CHFacade>
 IsochroneSearchResult phastOneToAllSearch(const CHFacade &facade,
-                                          const PhantomNodeCandidates &source_candidates,
+                                          const PhantomNodeCandidates &endpoint_candidates,
                                           const EdgeDuration duration_cutoff)
 {
     IsochroneSearchResult result;
@@ -417,16 +436,17 @@ IsochroneSearchResult phastOneToAllSearch(const CHFacade &facade,
 
     detail::IsochroneCHQueryHeap heap(facade.GetNumberOfNodes());
     std::vector<detail::IsochroneCHNodeLabel> source_labels(facade.GetNumberOfNodes());
-    if (!detail::initializeSources(heap, source_labels, source_candidates, facade) ||
-        !detail::runUpwardSearch(facade, heap))
+    if (!detail::initializeSources<FORWARD_SEARCH>(
+            heap, source_labels, endpoint_candidates, facade) ||
+        !detail::runUpwardSearch<FORWARD_SEARCH>(facade, heap))
     {
         result.status = IsochroneSearchStatus::ArithmeticOverflow;
         return result;
     }
 
     auto labels = detail::collectUpwardLabels(heap, facade.GetNumberOfNodes());
-    if (!detail::runCoreSearch(facade, *order, source_labels, labels) ||
-        !detail::runDownwardSweep(facade, *order, source_labels, labels))
+    if (!detail::runCoreSearch<FORWARD_SEARCH>(facade, *order, source_labels, labels) ||
+        !detail::runDownwardSweep<FORWARD_SEARCH>(facade, *order, source_labels, labels))
     {
         result.status = IsochroneSearchStatus::ArithmeticOverflow;
         return result;
@@ -438,6 +458,8 @@ IsochroneSearchResult phastOneToAllSearch(const CHFacade &facade,
         const auto &label = labels[node];
         if (label.reachable && label.duration <= duration_cutoff)
             result.nodes.push_back({node, label.weight, label.duration});
+        else if (label.reachable)
+            result.competitors.push_back({node, label.weight, label.duration});
     }
     return result;
 }

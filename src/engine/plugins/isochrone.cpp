@@ -59,7 +59,8 @@ Status IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorith
         return Error("NoSegment", "Could not find a matching segment for the coordinate.", result);
 
     const PhantomNodeCandidates source_candidates{phantom_nodes.front().front().phantom_node};
-    const auto search_result = algorithms.IsochroneSearch(source_candidates, duration_threshold);
+    const auto search_result =
+        algorithms.IsochroneSearch(source_candidates, duration_threshold, false);
     if (search_result.status == routing_algorithms::ReachabilitySearchStatus::UnsupportedGraph)
         return Error(
             "NotImplemented", "The loaded graph does not support isochrone search.", result);

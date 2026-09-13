@@ -36,6 +36,7 @@ struct ReachabilityNode
 struct ReachabilitySearchResult
 {
     std::vector<ReachabilityNode> nodes;
+    std::vector<ReachabilityNode> competitors;
     ReachabilitySearchStatus status = ReachabilitySearchStatus::Complete;
 
     bool isComplete() const { return status == ReachabilitySearchStatus::Complete; }
@@ -44,10 +45,10 @@ struct ReachabilitySearchResult
 namespace mld
 {
 
-template <typename FacadeT>
+template <bool DIRECTION, typename FacadeT>
 ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
                                             const FacadeT &facade,
-                                            const PhantomNodeCandidates &source_candidates,
+                                            const PhantomNodeCandidates &endpoint_candidates,
                                             const EdgeDuration max_duration)
 {
     BOOST_ASSERT(max_duration >= EdgeDuration{0});
@@ -72,24 +73,38 @@ ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_
             // label for the edge-based node itself.  Relax it directly into the query heap so a
             // real path that later returns to this node is not discarded as a worse duplicate.
             const SourceNode source_node{node, weight, {node, false, duration}};
-            relaxOutgoingEdges<FORWARD_DIRECTION>(
+            relaxOutgoingEdges<DIRECTION>(
                 facade, query_heap, source_node, ReachabilitySearch{});
         }
     };
 
-    for (const auto &source : source_candidates)
+    for (const auto &endpoint : endpoint_candidates)
     {
-        if (source.IsValidForwardSource())
+        const auto forward_is_valid = DIRECTION == FORWARD_DIRECTION
+                                          ? endpoint.IsValidForwardSource()
+                                          : endpoint.IsValidForwardTarget();
+        if (forward_is_valid)
         {
-            insert_source(source.forward_segment_id.id,
-                          source.GetForwardWeightAsSource(),
-                          source.GetForwardDurationAsSource());
+            insert_source(endpoint.forward_segment_id.id,
+                          DIRECTION == FORWARD_DIRECTION
+                              ? endpoint.GetForwardWeightAsSource()
+                              : endpoint.GetForwardWeightAsTarget(),
+                          DIRECTION == FORWARD_DIRECTION
+                              ? endpoint.GetForwardDurationAsSource()
+                              : endpoint.GetForwardDurationAsTarget());
         }
-        if (source.IsValidReverseSource())
+        const auto reverse_is_valid = DIRECTION == FORWARD_DIRECTION
+                                          ? endpoint.IsValidReverseSource()
+                                          : endpoint.IsValidReverseTarget();
+        if (reverse_is_valid)
         {
-            insert_source(source.reverse_segment_id.id,
-                          source.GetReverseWeightAsSource(),
-                          source.GetReverseDurationAsSource());
+            insert_source(endpoint.reverse_segment_id.id,
+                          DIRECTION == FORWARD_DIRECTION
+                              ? endpoint.GetReverseWeightAsSource()
+                              : endpoint.GetReverseWeightAsTarget(),
+                          DIRECTION == FORWARD_DIRECTION
+                              ? endpoint.GetReverseDurationAsSource()
+                              : endpoint.GetReverseDurationAsTarget());
         }
     }
 
@@ -105,11 +120,26 @@ ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_
         {
             result.nodes.push_back({heap_node.node, heap_node.weight, heap_node.data.duration});
         }
+        else
+        {
+            result.competitors.push_back(
+                {heap_node.node, heap_node.weight, heap_node.data.duration});
+        }
 
-        relaxOutgoingEdges<FORWARD_DIRECTION>(facade, query_heap, heap_node, ReachabilitySearch{});
+        relaxOutgoingEdges<DIRECTION>(facade, query_heap, heap_node, ReachabilitySearch{});
     }
 
     return result;
+}
+
+template <typename FacadeT>
+ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
+                                            const FacadeT &facade,
+                                            const PhantomNodeCandidates &source_candidates,
+                                            const EdgeDuration max_duration)
+{
+    return reachabilitySearch<FORWARD_DIRECTION>(
+        engine_working_data, facade, source_candidates, max_duration);
 }
 
 } // namespace mld
@@ -118,30 +148,44 @@ template <typename Algorithm>
 ReachabilitySearchResult reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
                                             const DataFacade<Algorithm> &facade,
                                             const PhantomNodeCandidates &source_candidates,
-                                            EdgeDuration max_duration);
+                                            EdgeDuration max_duration,
+                                            bool inbound = false);
 
 template <>
 inline ReachabilitySearchResult
 reachabilitySearch<mld::Algorithm>(SearchEngineData<mld::Algorithm> &engine_working_data,
                                    const DataFacade<mld::Algorithm> &facade,
                                    const PhantomNodeCandidates &source_candidates,
-                                   const EdgeDuration max_duration)
-{ return mld::reachabilitySearch(engine_working_data, facade, source_candidates, max_duration); }
+                                   const EdgeDuration max_duration,
+                                   const bool inbound)
+{
+    if (inbound)
+        return mld::reachabilitySearch<REVERSE_DIRECTION>(
+            engine_working_data, facade, source_candidates, max_duration);
+    return mld::reachabilitySearch<FORWARD_DIRECTION>(
+        engine_working_data, facade, source_candidates, max_duration);
+}
 
 template <>
 inline ReachabilitySearchResult
 reachabilitySearch<ch::Algorithm>(SearchEngineData<ch::Algorithm> &engine_working_data,
                                   const DataFacade<ch::Algorithm> &facade,
                                   const PhantomNodeCandidates &source_candidates,
-                                  const EdgeDuration max_duration)
+                                  const EdgeDuration max_duration,
+                                  const bool inbound)
 {
     static_cast<void>(engine_working_data);
-    auto ch_result = ch::phastOneToAllSearch(facade, source_candidates, max_duration);
+    auto ch_result = inbound
+                         ? ch::phastOneToAllSearch<false>(facade, source_candidates, max_duration)
+                         : ch::phastOneToAllSearch<true>(facade, source_candidates, max_duration);
 
     ReachabilitySearchResult result;
     result.nodes.reserve(ch_result.nodes.size());
     for (const auto &node : ch_result.nodes)
         result.nodes.push_back({node.node, node.weight, node.duration});
+    result.competitors.reserve(ch_result.competitors.size());
+    for (const auto &node : ch_result.competitors)
+        result.competitors.push_back({node.node, node.weight, node.duration});
 
     switch (ch_result.status)
     {

@@ -12,8 +12,10 @@ namespace
 class ReachabilityFacade final
 {
   public:
-    explicit ReachabilityFacade(const bool include_source_self_loop = false)
-        : m_include_source_self_loop(include_source_self_loop)
+    explicit ReachabilityFacade(const bool include_source_self_loop = false,
+                                const bool reverse_search_graph = false)
+        : m_include_source_self_loop(include_source_self_loop),
+          m_reverse_search_graph(reverse_search_graph)
     {
     }
 
@@ -66,8 +68,9 @@ class ReachabilityFacade final
         return util::irange<EdgeID>(first, last);
     }
 
-    bool IsForwardEdge(EdgeID edge) const { return edge != 3 || m_include_source_self_loop; }
-    bool IsBackwardEdge(EdgeID) const { return false; }
+    bool IsForwardEdge(EdgeID edge) const
+    { return !m_reverse_search_graph && (edge != 3 || m_include_source_self_loop); }
+    bool IsBackwardEdge(EdgeID) const { return m_reverse_search_graph; }
     bool ExcludeNode(NodeID node) const { return node == 4; }
 
     NodeID GetTarget(EdgeID edge) const
@@ -113,6 +116,7 @@ class ReachabilityFacade final
     CellStorage cell_storage;
     Metric metric;
     bool m_include_source_self_loop;
+    bool m_reverse_search_graph;
 };
 
 PhantomNode makeSource()
@@ -128,6 +132,23 @@ PhantomNode makeSource()
                        {95},   {0},        {0},  {0},
                        {0},    {0},        {4},  MAXIMAL_EDGE_DURATION,
                        {6},    {0},        true, false,
+                       false,  false,      {},   {},
+                       0};
+}
+
+PhantomNode makeTarget()
+{
+    struct Seed
+    {
+        SegmentID forward_segment_id{0, true};
+        SegmentID reverse_segment_id{SPECIAL_SEGMENTID, false};
+        unsigned short fwd_segment_position = 0;
+    };
+
+    return PhantomNode{Seed{}, {1, false}, {0},  INVALID_EDGE_WEIGHT,
+                       {0},    {0},        {0},  {0},
+                       {0},    {0},        {0},  MAXIMAL_EDGE_DURATION,
+                       {0},    {0},        false, true,
                        false,  false,      {},   {},
                        0};
 }
@@ -218,6 +239,23 @@ BOOST_AUTO_TEST_CASE(allows_a_real_path_to_reenter_its_source_node)
     BOOST_REQUIRE(source_node != reachable_nodes.end());
     BOOST_CHECK_EQUAL(source_node->weight, EdgeWeight{101});
     BOOST_CHECK_EQUAL(source_node->duration, EdgeDuration{3});
+}
+
+BOOST_AUTO_TEST_CASE(inbound_search_uses_target_seeds_and_reverse_edges)
+{
+    SearchEngineData<Algorithm> heaps;
+    const ReachabilityFacade facade{false, true};
+
+    const auto result = reachabilitySearch<REVERSE_DIRECTION>(
+        heaps, facade, {makeTarget()}, EdgeDuration{2});
+
+    BOOST_REQUIRE(result.isComplete());
+    const auto node_one = std::find_if(result.nodes.begin(),
+                                       result.nodes.end(),
+                                       [](const auto &node) { return node.node == 1; });
+    BOOST_REQUIRE(node_one != result.nodes.end());
+    BOOST_CHECK_EQUAL(node_one->weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(node_one->duration, EdgeDuration{2});
 }
 
 BOOST_AUTO_TEST_SUITE_END()
