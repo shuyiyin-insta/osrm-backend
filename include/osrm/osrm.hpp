@@ -57,6 +57,7 @@ using engine::api::TripParameters;
  *  - Nearest: nearest street segment for coordinate
  *  - Trip: shortest round trip between coordinates
  *  - Match: snaps noisy coordinate traces to the road network
+ *  - Isochrone: duration-bounded reachable-area queries
  *  - Tile: vector tiles with internal graph representation
  *
  *  All services take service-specific parameters, fill a JSON object, and return a status code.
@@ -139,9 +140,16 @@ class OSRM final
     Status Tile(const TileParameters &parameters, engine::api::ResultT &result) const;
 
     /**
-     * Isochrone: isochrone (range polygon) from a point
+     * Isochrone queries for locations reachable within elapsed-duration thresholds expressed by
+     * IsochroneParameters::contours_seconds.
+     *
+     * The response contains GeoJSON in a JSON object.
+     *
+     * \param parameters isochrone query specific parameters
+     * \return Status indicating success for the query or failure
+     * \see Status, IsochroneParameters and json::Object
      */
-    Status Isochrone(const IsochroneParameters &parameters, std::string &result) const;
+    Status Isochrone(const IsochroneParameters &parameters, json::Object &result) const;
     Status Isochrone(const IsochroneParameters &parameters, engine::api::ResultT &result) const;
 
   private:

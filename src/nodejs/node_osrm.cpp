@@ -1,4 +1,5 @@
 #include "osrm/engine_config.hpp"
+#include "osrm/isochrone_parameters.hpp"
 #include "osrm/osrm.hpp"
 
 #include "osrm/match_parameters.hpp"
@@ -25,6 +26,7 @@ Napi::Object Engine::Init(Napi::Env env, Napi::Object exports)
                                       "OSRM",
                                       {
                                           InstanceMethod("route", &Engine::route),
+                                          InstanceMethod("isochrone", &Engine::isochrone),
                                           InstanceMethod("nearest", &Engine::nearest),
                                           InstanceMethod("table", &Engine::table),
                                           InstanceMethod("tile", &Engine::tile),
@@ -313,6 +315,42 @@ Napi::Value Engine::route(const Napi::CallbackInfo &info)
                                          osrm::engine::api::ResultT &result) const =
         &osrm::OSRM::Route;
     async(info, &argumentsToRouteParameter, route_fn, true);
+    return info.Env().Undefined();
+}
+
+// clang-format off
+/**
+ * Computes the region reachable from one coordinate within each supplied elapsed-duration contour.
+ *
+ * @name isochrone
+ * @memberof OSRM
+ * @param {Object} options Object literal containing parameters for the isochrone query.
+ * @param {Array} options.coordinates Exactly one coordinate as a `[longitude, latitude]` pair.
+ * @param {Array<Number>} options.contours_seconds Positive elapsed-duration thresholds in seconds.
+ * @param {String} [options.direction=outbound] Travel direction: `outbound` or `inbound`.
+ * @param {Boolean} [options.polygons=true] Return filled polygons rather than contour lines.
+ * @param {Number} [options.generalize] Simplify contour geometry with a finite, nonnegative tolerance in metres.
+ * @param {Number} [options.denoise] Remove components and holes below this zero-to-one area ratio.
+ * @param {Array} [options.bearings] Limits the coordinate snapping to segments with the given bearing.
+ * @param {Array} [options.radiuses] Limits the coordinate snapping to streets in the given radius in meters.
+ * @param {Array} [options.hints] Hint from a previous request to derive position in street network.
+ * @param {Boolean} [options.generate_hints=true] Whether to include a hint for the snapped waypoint.
+ * @param {Array} [options.approaches] Restrict the direction on the road network at the input coordinate.
+ * @param {Array} [options.exclude] List of classes to avoid, order does not matter.
+ * @param {String} [options.format=json] Response format. Only `json` is supported.
+ * @param {String} [options.snapping=default] Which edges can be snapped to, either `default` or `any`.
+ * @param {Boolean} [options.skip_waypoints=false] Remove snapped waypoints from the response.
+ * @param {Function} callback
+ *
+ * @returns {Object} A GeoJSON FeatureCollection with one feature for each requested contour.
+ */
+// clang-format on
+Napi::Value Engine::isochrone(const Napi::CallbackInfo &info)
+{
+    osrm::Status (osrm::OSRM::*isochrone_fn)(const osrm::IsochroneParameters &params,
+                                             osrm::engine::api::ResultT &result) const =
+        &osrm::OSRM::Isochrone;
+    async(info, &argumentsToIsochroneParameter, isochrone_fn, {/*unused*/});
     return info.Env().Undefined();
 }
 

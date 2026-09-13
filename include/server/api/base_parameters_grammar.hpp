@@ -36,10 +36,17 @@ template <typename T, char... Fmt> struct no_trailing_dot_policy : x3::real_poli
         if (diff <= 0 || *first != '.')
             return false;
 
-        static const constexpr char fmt[sizeof...(Fmt)] = {Fmt...};
+        static constexpr char json_format[] = "json";
+        static constexpr char flatbuffers_format[] = "flatbuffers";
+        const auto starts_with_format = [first, last](const auto &format)
+        {
+            return std::distance(first + 1u, last) >=
+                       static_cast<typename std::iterator_traits<Iterator>::difference_type>(
+                           sizeof(format) - 1) &&
+                   std::equal(std::begin(format), std::end(format) - 1, first + 1u);
+        };
 
-        if (sizeof(fmt) < static_cast<size_t>(diff) &&
-            std::equal(fmt, fmt + sizeof(fmt), first + 1u))
+        if (starts_with_format(json_format) || starts_with_format(flatbuffers_format))
             return false;
 
         ++first;

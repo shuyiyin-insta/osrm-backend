@@ -129,6 +129,35 @@ Inherits all [BaseParameters](#baseparameters).
 
 - **`number_of_results`** `int` - Number of nearest segments to return. Default: `1`.
 
+## Isochrone
+
+Computes the region reachable from one coordinate within each supplied elapsed-duration contour.
+The result is a GeoJSON `FeatureCollection` in an `Object`.
+
+```python
+params = osrm.IsochroneParameters(
+    coordinates=[(7.41337, 43.72956)],
+    contours_seconds=[300.0, 600.0],
+    direction="outbound",
+    polygons=True,
+    generalize=25.0,
+    denoise=0.01,
+)
+result = engine.Isochrone(params)
+```
+
+### IsochroneParameters
+
+Inherits all [BaseParameters](#baseparameters). Exactly one coordinate is required.
+
+- **`contours_seconds`** `list[float]` - Positive elapsed-duration thresholds in seconds.
+- **`direction`** `str` - `"outbound"` or `"inbound"`. Default: `"outbound"`.
+- **`polygons`** `bool` - Return filled polygons rather than contour lines. Default: `True`.
+- **`generalize`** `float | None` - Finite, nonnegative contour simplification tolerance in metres.
+  Omit or use `0` to preserve unsimplified geometry. Default: `None`.
+- **`denoise`** `float | None` - Finite threshold from `0` to `1` that removes complete components
+  and holes below the relative area threshold. Omit or use `0` to retain every ring. Default: `None`.
+
 ## Match
 
 Snaps noisy GPS traces to the road network.

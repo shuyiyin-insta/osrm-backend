@@ -39,7 +39,7 @@ var osrm = new OSRM('network.osrm');
     *   `options.max_locations_map_matching` **[Number][6]?** Max. locations supported in map-matching query (default: unlimited).
     *   `options.max_radius_map_matching` **[Number][6]?** Max. radius size supported in map matching query (default: 5).
     *   `options.max_results_nearest` **[Number][6]?** Max. results supported in nearest query (default: unlimited).
-    *   `options.max_isochrone_range` **[Number][6]?** Max. isochrone range supported in query, in seconds (default: 900).
+    *   `options.max_isochrone_range` **[Number][6]?** Max. isochrone range in seconds (default: 900).
     *   `options.max_alternatives` **[Number][6]?** Max. number of alternatives supported in alternative routes query (default: 3).
     *   `options.default_radius` **[Number][6]?** Default radius for queries (default: unlimited).
 
@@ -86,6 +86,33 @@ osrm.route({coordinates: [[52.519930,13.438640], [52.513191,13.415852]]}, functi
 ```
 
 Returns **[Object][2]** An array of [Waypoint][9] objects representing all waypoints in order AND an array of [`Route`][10] objects ordered by descending recommendation rank.
+
+### isochrone
+
+Computes the region reachable from one coordinate within each supplied elapsed-duration contour.
+
+#### Parameters
+
+*   `options` **[Object][2]** Object literal containing parameters for the isochrone query.
+
+    *   `options.coordinates` **[Array][5]** Exactly one coordinate as a `[longitude, latitude]` pair.
+    *   `options.contours_seconds` **[Array][5]<[Number][6]>** Positive elapsed-duration thresholds in seconds.
+    *   `options.direction` **[String][3]** Travel direction: `outbound` or `inbound`. (optional, default `outbound`)
+    *   `options.polygons` **[Boolean][4]** Return filled polygons rather than contour lines. (optional, default `true`)
+    *   `options.generalize` **[Number][6]?** Simplify contour geometry with a finite, nonnegative tolerance in metres.
+    *   `options.denoise` **[Number][6]?** Remove components and holes below this zero-to-one area ratio.
+    *   `options.bearings` **[Array][5]?** Limits the coordinate snapping to segments with the given bearing.
+    *   `options.radiuses` **[Array][5]?** Limits the coordinate snapping to streets in the given radius in meters.
+    *   `options.hints` **[Array][5]?** Hint from a previous request to derive position in street network.
+    *   `options.generate_hints` **[Boolean][4]** Whether to include a hint for the snapped waypoint. (optional, default `true`)
+    *   `options.approaches` **[Array][5]?** Restrict the direction on the road network at the input coordinate.
+    *   `options.exclude` **[Array][5]?** List of classes to avoid, order does not matter.
+    *   `options.format` **[String][3]** Response format. Only `json` is supported. (optional, default `json`)
+    *   `options.snapping` **[String][3]** Which edges can be snapped to, either `default` or `any`. (optional, default `default`)
+    *   `options.skip_waypoints` **[Boolean][4]** Remove snapped waypoints from the response. (optional, default `false`)
+*   `callback` **[Function][8]**&#x20;
+
+Returns **[Object][2]** A GeoJSON FeatureCollection with one feature for each requested contour.
 
 ### nearest
 

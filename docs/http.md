@@ -17,7 +17,7 @@ GET /{service}/{version}/{profile}/{coordinates}[.{format}]?option=value&option=
 
 | Parameter | Description |
 | --- | --- |
-| `service` | One of the following values: [`route`](#route-service), [`nearest`](#nearest-service), [`table`](#table-service), [`match`](#match-service), [`trip`](#trip-service), [`tile`](#tile-service) |
+| `service` | One of the following values: [`route`](#route-service), [`nearest`](#nearest-service), [`table`](#table-service), [`match`](#match-service), [`trip`](#trip-service), [`isochrone`](#isochrone-service), [`tile`](#tile-service) |
 | `version` | Version of the protocol implemented by the service. `v1` for all OSRM 5.x installations |
 | `profile` | Mode of transportation, is determined statically by the Lua profile that is used to prepare the data using `osrm-extract`. Typically `car`, `bike` or `foot` if using one of the supplied profiles. |
 | `coordinates`| String of format `{longitude},{latitude};{longitude},{latitude}[;{longitude},{latitude} ...]` or `polyline({polyline}) or polyline6({polyline6})`. |
@@ -272,6 +272,48 @@ Two coordinates (`13.388860,52.517037;0,0?number=1`), where the second coordinat
    "code" : "Ok"
 }
 ```
+
+### Isochrone service
+
+Computes the region reachable from one coordinate within one or more elapsed-duration contours.
+The search minimizes the profile's total routing weight and, among equal-weight paths, elapsed
+duration. Contours are applied to that selected elapsed duration.
+
+```endpoint
+GET /isochrone/v1/{profile}/{longitude},{latitude}?contours_seconds={seconds}[,{seconds}...]&direction={outbound|inbound}&polygons={true|false}&generalize={metres}&denoise={ratio}
+```
+
+Exactly one coordinate and at least one finite, positive `contours_seconds` value are required.
+Only JSON/GeoJSON output is supported; a `.flatbuffers` request returns `NotImplemented`.
+Durations use OSRM's decisecond precision. Values too small to represent return `InvalidValue`.
+Each query remains subject to the server's configured isochrone range limit.
+
+In addition to the [general options](#general-options), this service supports:
+
+| Option | Values | Description |
+| --- | --- | --- |
+| `contours_seconds` | one or more comma-separated `double > 0` values | Required elapsed-duration thresholds in seconds. A feature is returned for every value, in request order. |
+| `direction` | `outbound` (default), `inbound` | For outbound contours, show locations reachable from the input. For inbound contours, show locations that can reach the input. |
+| `polygons` | `true` (default), `false` | Return filled `MultiPolygon` boundaries or closed `MultiLineString` boundaries. |
+| `generalize` | finite `double >= 0` metres | Optional geometry simplification tolerance. Omit or use `0` to preserve the unsimplified boundary. |
+| `denoise` | finite `double` from `0` to `1` | Optional small-component and hole removal threshold. Omit or use `0` to retain every ring. |
+
+#### Example request
+
+```bash
+curl 'http://localhost:5000/isochrone/v1/driving/13.388860,52.517037?contours_seconds=300,600&direction=outbound'
+```
+
+#### Response
+
+The successful response is a GeoJSON `FeatureCollection` with OSRM response metadata:
+
+- `code`: `Ok`.
+- `type`: `FeatureCollection`.
+- `features`: one GeoJSON `Feature` for every requested contour, in request order. Each has a
+  numeric `properties.contour_seconds` and either a `MultiPolygon` or `MultiLineString`
+  geometry, according to `polygons`.
+- `waypoints`: one snapped input waypoint, unless `skip_waypoints=true` was supplied.
 
 ### Route service
 

@@ -7,6 +7,7 @@
 #include "osrm/bearing.hpp"
 #include "osrm/coordinate.hpp"
 #include "osrm/engine_config.hpp"
+#include "osrm/isochrone_parameters.hpp"
 #include "osrm/json_container.hpp"
 #include "osrm/match_parameters.hpp"
 #include "osrm/nearest_parameters.hpp"
@@ -24,6 +25,7 @@
 #include <optional>
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <stdexcept>
 #include <string>
@@ -44,6 +46,7 @@ using tile_parameters_ptr = std::unique_ptr<osrm::TileParameters>;
 using match_parameters_ptr = std::unique_ptr<osrm::MatchParameters>;
 using nearest_parameters_ptr = std::unique_ptr<osrm::NearestParameters>;
 using table_parameters_ptr = std::unique_ptr<osrm::TableParameters>;
+using isochrone_parameters_ptr = std::unique_ptr<osrm::IsochroneParameters>;
 
 struct PluginParameters
 {
@@ -1309,6 +1312,134 @@ inline nearest_parameters_ptr argumentsToNearestParameter(const Napi::CallbackIn
 
             params->number_of_results = number_value;
         }
+    }
+
+    return params;
+}
+
+inline isochrone_parameters_ptr argumentsToIsochroneParameter(const Napi::CallbackInfo &args,
+                                                              bool /*unused*/)
+{
+    auto params = std::make_unique<osrm::IsochroneParameters>();
+    if (!argumentsToParameter(args, params, false))
+    {
+        return isochrone_parameters_ptr();
+    }
+
+    const Napi::Object obj = args[0].As<Napi::Object>();
+    const Napi::Value contours_seconds = obj.Get("contours_seconds");
+    if (contours_seconds.IsEmpty())
+    {
+        return isochrone_parameters_ptr();
+    }
+    if (!contours_seconds.IsArray())
+    {
+        ThrowError(
+            args.Env(),
+            "contours_seconds must be a non-empty array of positive finite durations in seconds");
+        return isochrone_parameters_ptr();
+    }
+
+    const Napi::Array contour_array = contours_seconds.As<Napi::Array>();
+    if (contour_array.Length() == 0)
+    {
+        ThrowError(
+            args.Env(),
+            "contours_seconds must be a non-empty array of positive finite durations in seconds");
+        return isochrone_parameters_ptr();
+    }
+    for (uint32_t index = 0; index < contour_array.Length(); ++index)
+    {
+        const Napi::Value contour = contour_array.Get(index);
+        if (!contour.IsNumber())
+        {
+            ThrowError(args.Env(),
+                       "contours_seconds must be a non-empty array of positive finite durations in "
+                       "seconds");
+            return isochrone_parameters_ptr();
+        }
+
+        const auto value = contour.ToNumber().DoubleValue();
+        if (!std::isfinite(value) || value <= 0.)
+        {
+            ThrowError(args.Env(),
+                       "contours_seconds must be a non-empty array of positive finite durations in "
+                       "seconds");
+            return isochrone_parameters_ptr();
+        }
+        params->contours_seconds.push_back(value);
+    }
+
+    if (obj.Has("direction"))
+    {
+        const Napi::Value direction = obj.Get("direction");
+        if (!direction.IsString())
+        {
+            ThrowError(args.Env(), "Direction must be a string: [outbound, inbound]");
+            return isochrone_parameters_ptr();
+        }
+
+        const std::string direction_value = direction.ToString().Utf8Value();
+        if (direction_value == "outbound")
+        {
+            params->direction = osrm::IsochroneParameters::Direction::Outbound;
+        }
+        else if (direction_value == "inbound")
+        {
+            params->direction = osrm::IsochroneParameters::Direction::Inbound;
+        }
+        else
+        {
+            ThrowError(args.Env(), "Direction must be a string: [outbound, inbound]");
+            return isochrone_parameters_ptr();
+        }
+    }
+
+    if (obj.Has("polygons"))
+    {
+        const Napi::Value polygons = obj.Get("polygons");
+        if (!polygons.IsBoolean())
+        {
+            ThrowError(args.Env(), "polygons must be of type Boolean");
+            return isochrone_parameters_ptr();
+        }
+        params->polygons = polygons.ToBoolean().Value();
+    }
+
+    if (obj.Has("generalize"))
+    {
+        const Napi::Value generalize = obj.Get("generalize");
+        if (!generalize.IsNumber())
+        {
+            ThrowError(args.Env(), "Generalize must be a finite nonnegative tolerance in metres");
+            return isochrone_parameters_ptr();
+        }
+
+        const auto value = generalize.ToNumber().DoubleValue();
+        if (!std::isfinite(value) || value < 0.)
+        {
+            ThrowError(args.Env(), "Generalize must be a finite nonnegative tolerance in metres");
+            return isochrone_parameters_ptr();
+        }
+        params->generalize = value;
+    }
+
+    if (obj.Has("denoise"))
+    {
+        const Napi::Value denoise = obj.Get("denoise");
+        if (!denoise.IsNumber())
+        {
+            ThrowError(args.Env(), "Denoise must be a finite number between zero and one");
+            return isochrone_parameters_ptr();
+        }
+
+        const auto value = denoise.ToNumber().DoubleValue();
+        if (!std::isfinite(value) || value < 0. || value > 1.)
+        {
+            ThrowError(args.Env(), "Denoise must be a finite number between zero and one");
+            return isochrone_parameters_ptr();
+        }
+        params->denoise = value;
     }
 
     return params;
