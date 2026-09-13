@@ -59,7 +59,7 @@ class Engine final : public EngineInterface
                        config.max_radius_map_matching,
                        config.default_radius), //
           tile_plugin(),                       //
-          isochrone_plugin(config.max_isochrone_range)
+          isochrone_plugin(config.default_radius, config.max_isochrone_range)
 
     {
         if (config.use_shared_memory)
