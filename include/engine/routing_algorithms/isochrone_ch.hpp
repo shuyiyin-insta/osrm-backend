@@ -85,16 +85,19 @@ inline bool isBetterLabel(const EdgeWeight candidate_weight,
                           const EdgeDuration candidate_duration,
                           const IsochroneCHNodeLabel &current)
 {
-    return !current.reachable || std::tie(candidate_weight, candidate_duration) <
-                                     std::tie(current.weight, current.duration);
+    // CH preprocessing chooses paths by profile weight.  Its shortcuts can have discarded a
+    // different equal-weight path with a shorter duration, so duration is carried metadata, not
+    // a secondary shortest-path criterion.
+    static_cast<void>(candidate_duration);
+    return !current.reachable || candidate_weight < current.weight;
 }
 
 inline bool isBetterLabel(const EdgeWeight candidate_weight,
                           const EdgeDuration candidate_duration,
                           const IsochroneCHQueryHeap::HeapNode &current)
 {
-    return std::tie(candidate_weight, candidate_duration) <
-           std::tie(current.weight, current.data.duration);
+    static_cast<void>(candidate_duration);
+    return candidate_weight < current.weight;
 }
 
 template <typename CHFacade>
@@ -194,7 +197,7 @@ inline void insertOrUpdate(IsochroneCHQueryHeap &heap,
     }
 }
 
-inline bool insertSource(IsochroneCHQueryHeap &heap,
+inline bool insertSource(std::vector<IsochroneCHNodeLabel> &source_labels,
                          const NodeID node,
                          const EdgeWeight weight,
                          const EdgeDuration duration)
@@ -202,12 +205,15 @@ inline bool insertSource(IsochroneCHQueryHeap &heap,
     if (!isValidMetric(weight) || !isValidMetric(duration))
         return false;
 
-    insertOrUpdate(heap, node, weight, duration);
+    auto &current = source_labels[node];
+    if (isBetterLabel(weight, duration, current))
+        current = {weight, duration, true};
     return true;
 }
 
 template <typename CHFacade>
 bool initializeSources(IsochroneCHQueryHeap &heap,
+                       std::vector<IsochroneCHNodeLabel> &source_labels,
                        const PhantomNodeCandidates &source_candidates,
                        const CHFacade &facade)
 {
@@ -217,7 +223,7 @@ bool initializeSources(IsochroneCHQueryHeap &heap,
         if (source.IsValidForwardSource())
         {
             if (source.forward_segment_id.id >= number_of_nodes ||
-                !insertSource(heap,
+                !insertSource(source_labels,
                               source.forward_segment_id.id,
                               source.GetForwardWeightAsSource(),
                               source.GetForwardDurationAsSource()))
@@ -226,11 +232,39 @@ bool initializeSources(IsochroneCHQueryHeap &heap,
         if (source.IsValidReverseSource())
         {
             if (source.reverse_segment_id.id >= number_of_nodes ||
-                !insertSource(heap,
+                !insertSource(source_labels,
                               source.reverse_segment_id.id,
                               source.GetReverseWeightAsSource(),
                               source.GetReverseDurationAsSource()))
                 return false;
+        }
+    }
+
+    // A phantom source is a virtual point inside a directed geometry, rather than an ordinary
+    // network node.  Do not settle its negative seed in the heap: a loop can return to the same
+    // node with a real, positive network label.  Seed the upward CH arcs directly instead.
+    for (const auto source : util::irange<NodeID>(0, number_of_nodes))
+    {
+        const auto &source_label = source_labels[source];
+        if (!source_label.reachable)
+            continue;
+
+        for (const auto edge : facade.GetAdjacentEdgeRange(source))
+        {
+            const auto &data = facade.GetEdgeData(edge);
+            if (!data.forward)
+                continue;
+
+            BOOST_ASSERT(data.weight > EdgeWeight{0});
+            BOOST_ASSERT(data.duration >= EdgeDuration{0});
+
+            EdgeWeight weight;
+            EdgeDuration duration;
+            if (!checkedAdd(source_label.weight, data.weight, weight) ||
+                !checkedAdd(source_label.duration, to_alias<EdgeDuration>(data.duration), duration))
+                return false;
+
+            insertOrUpdate(heap, facade.GetTarget(edge), weight, duration);
         }
     }
     return true;
@@ -280,6 +314,7 @@ inline std::vector<IsochroneCHNodeLabel> collectUpwardLabels(const IsochroneCHQu
 template <typename CHFacade>
 bool runDownwardSweep(const CHFacade &facade,
                       const std::vector<NodeID> &order,
+                      const std::vector<IsochroneCHNodeLabel> &source_labels,
                       std::vector<IsochroneCHNodeLabel> &labels)
 {
     std::vector<unsigned> rank(labels.size());
@@ -296,15 +331,17 @@ bool runDownwardSweep(const CHFacade &facade,
                 continue;
 
             const auto higher = facade.GetTarget(edge);
-            if (higher == lower)
-                continue;
-            BOOST_ASSERT(rank[lower] < rank[higher]);
-            if (!labels[higher].reachable)
-                continue;
-            if (!relaxLabel(labels[higher],
+            BOOST_ASSERT(higher == lower || rank[lower] < rank[higher]);
+            if (source_labels[higher].reachable &&
+                !relaxLabel(source_labels[higher],
                             data.weight,
                             to_alias<EdgeDuration>(data.duration),
                             labels[lower]))
+                return false;
+            if (labels[higher].reachable && !relaxLabel(labels[higher],
+                                                        data.weight,
+                                                        to_alias<EdgeDuration>(data.duration),
+                                                        labels[lower]))
                 return false;
         }
     }
@@ -317,11 +354,10 @@ bool runDownwardSweep(const CHFacade &facade,
 // needs GetNumberOfNodes, GetAdjacentEdgeRange, GetEdgeData, and GetTarget, which lets this
 // kernel stay independent of facade ownership and request dispatch.
 //
-// The returned labels include valid source seed nodes.  Their negative source offsets are needed
-// by a later geometry materializer to describe the source partial; they are not complete road
-// geometries on their own.  Labels are selected by profile weight and retain the corresponding
-// elapsed duration.  The cutoff filters final labels only, because a lower-weight label above the
-// duration cutoff can still suppress a higher-weight, shorter-duration candidate downstream.
+// Source seeds are virtual and are not returned as network labels; a later geometry materializer
+// describes the source partial.  Labels are selected by profile weight and retain the duration of
+// that selected CH path.  The cutoff filters final labels only, because a lower-weight label above
+// the duration cutoff can still suppress a higher-weight, shorter-duration candidate downstream.
 template <typename CHFacade>
 IsochroneSearchResult phastOneToAllSearch(const CHFacade &facade,
                                           const PhantomNodeCandidates &source_candidates,
@@ -338,7 +374,8 @@ IsochroneSearchResult phastOneToAllSearch(const CHFacade &facade,
     }
 
     detail::IsochroneCHQueryHeap heap(facade.GetNumberOfNodes());
-    if (!detail::initializeSources(heap, source_candidates, facade) ||
+    std::vector<detail::IsochroneCHNodeLabel> source_labels(facade.GetNumberOfNodes());
+    if (!detail::initializeSources(heap, source_labels, source_candidates, facade) ||
         !detail::runUpwardSearch(facade, heap))
     {
         result.status = IsochroneSearchStatus::ArithmeticOverflow;
@@ -346,7 +383,7 @@ IsochroneSearchResult phastOneToAllSearch(const CHFacade &facade,
     }
 
     auto labels = detail::collectUpwardLabels(heap, facade.GetNumberOfNodes());
-    if (!detail::runDownwardSweep(facade, order, labels))
+    if (!detail::runDownwardSweep(facade, order, source_labels, labels))
     {
         result.status = IsochroneSearchStatus::ArithmeticOverflow;
         return result;
