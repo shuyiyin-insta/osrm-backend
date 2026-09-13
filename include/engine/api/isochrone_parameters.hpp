@@ -52,7 +52,8 @@ struct IsochroneParameters : public BaseParameters
 {
     unsigned range = 15 * 60;
 
-    bool IsValid() const { return BaseParameters::IsValid() && range >= 1; }
+    bool IsValid() const
+    { return BaseParameters::IsValid() && coordinates.size() == 1 && range >= 1; }
 };
 }
 }

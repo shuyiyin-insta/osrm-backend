@@ -16,17 +16,76 @@ namespace server
 namespace service
 {
 
+namespace
+{
+
+std::string getWrongOptionHelp(const engine::api::IsochroneParameters &parameters)
+{
+    std::string help;
+
+    const auto coordinate_count = parameters.coordinates.size();
+
+    const bool parameter_size_mismatch =
+        constrainParamSize(
+            PARAMETER_SIZE_MISMATCH_MSG, "hints", parameters.hints, coordinate_count, help) ||
+        constrainParamSize(
+            PARAMETER_SIZE_MISMATCH_MSG, "bearings", parameters.bearings, coordinate_count, help) ||
+        constrainParamSize(
+            PARAMETER_SIZE_MISMATCH_MSG, "radiuses", parameters.radiuses, coordinate_count, help) ||
+        constrainParamSize(PARAMETER_SIZE_MISMATCH_MSG,
+                           "approaches",
+                           parameters.approaches,
+                           coordinate_count,
+                           help);
+
+    if (!parameter_size_mismatch && coordinate_count != 1)
+        help = "Exactly one coordinate is required.";
+    else if (!parameter_size_mismatch && parameters.range < 1)
+        help = "Range must be at least 1.";
+    else if (!parameter_size_mismatch)
+        help = "Invalid isochrone parameters.";
+
+    return help;
+}
+
+engine::Status runIsochrone(OSRM &routing_machine,
+                            const engine::api::IsochroneParameters &parameters,
+                            osrm::engine::api::ResultT &result)
+{
+    if (!parameters.IsValid())
+    {
+        auto &json_result = std::get<util::json::Object>(result);
+        json_result.values["code"] = "InvalidOptions";
+        json_result.values["message"] = getWrongOptionHelp(parameters);
+        return engine::Status::Error;
+    }
+    BOOST_ASSERT(parameters.IsValid());
+
+    if (parameters.format != engine::api::BaseParameters::OutputFormatType::JSON)
+    {
+        auto &json_result = std::get<util::json::Object>(result);
+        json_result.values["code"] = "NotImplemented";
+        json_result.values["message"] = "The isochrone service only supports JSON/GeoJSON output.";
+        return engine::Status::Error;
+    }
+
+    return routing_machine.Isochrone(parameters, result);
+}
+
+} // namespace
+
 engine::Status
 IsochroneService::RunQuery(std::size_t prefix_length, std::string &query, osrm::engine::api::ResultT &result)
 {
+    result = util::json::Object();
+    auto &json_result = std::get<util::json::Object>(result);
+
     auto query_iterator = query.begin();
     auto parameters =
         api::parseParameters<engine::api::IsochroneParameters>(query_iterator, query.end());
     if (!parameters || query_iterator != query.end())
     {
         const auto position = std::distance(query.begin(), query_iterator);
-        result = util::json::Object();
-        auto &json_result = std::get<util::json::Object>(result);
         json_result.values["code"] = "InvalidQuery";
         json_result.values["message"] =
             "Query string malformed close to position " + std::to_string(prefix_length + position);
@@ -34,19 +93,7 @@ IsochroneService::RunQuery(std::size_t prefix_length, std::string &query, osrm::
     }
     BOOST_ASSERT(parameters);
 
-    if (!parameters->IsValid())
-    {
-        result = util::json::Object();
-        auto &json_result = std::get<util::json::Object>(result);
-        json_result.values["code"] = "InvalidOptions";
-        json_result.values["message"] = "Invalid coodinates.  Range must be >= 1";
-        return engine::Status::Error;
-    }
-    BOOST_ASSERT(parameters->IsValid());
-
-    result = std::string();
-    auto &string_result = std::get<std::string>(result);
-    return BaseService::routing_machine.Isochrone(*parameters, string_result);
+    return runIsochrone(BaseService::routing_machine, *parameters, result);
 }
 }
 }

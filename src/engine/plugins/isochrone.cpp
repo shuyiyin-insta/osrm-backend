@@ -42,6 +42,14 @@ IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorithms,
                                const api::IsochroneParameters &parameters,
                                osrm::engine::api::ResultT &result) const
 {
+    if (!parameters.IsValid())
+        return Error("InvalidOptions", "Invalid isochrone parameters.", result);
+
+    if (!CheckAllCoordinates(parameters.coordinates))
+        return Error("InvalidOptions", "Coordinates are invalid", result);
+
+    BOOST_ASSERT(parameters.IsValid());
+
     const auto range = parameters.range;
     util::Coordinate startcoord = parameters.coordinates.front();
 
