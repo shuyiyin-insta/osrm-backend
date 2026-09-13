@@ -13,6 +13,8 @@
 #include "engine/routing_algorithms/shortest_path.hpp"
 #include "engine/routing_algorithms/tile_turns.hpp"
 
+#include <cstddef>
+
 namespace osrm::engine
 {
 
@@ -52,7 +54,8 @@ class RoutingAlgorithmsInterface
     virtual routing_algorithms::ReachabilitySearchResult
     IsochroneSearch(const PhantomNodeCandidates &source_candidates,
                     EdgeDuration duration_cutoff,
-                    bool inbound) const = 0;
+                    bool inbound,
+                    std::size_t maximum_search_nodes) const = 0;
 
     virtual const DataFacadeBase &GetFacade() const = 0;
 
@@ -111,7 +114,8 @@ class RoutingAlgorithms final : public RoutingAlgorithmsInterface
     routing_algorithms::ReachabilitySearchResult
     IsochroneSearch(const PhantomNodeCandidates &source_candidates,
                     EdgeDuration duration_cutoff,
-                    bool inbound) const final override;
+                    bool inbound,
+                    std::size_t maximum_search_nodes) const final override;
 
     const DataFacadeBase &GetFacade() const final override { return *facade; }
 
@@ -227,10 +231,11 @@ template <routing_algorithms::RoutingAlgorithm Algorithm>
 routing_algorithms::ReachabilitySearchResult
 RoutingAlgorithms<Algorithm>::IsochroneSearch(const PhantomNodeCandidates &source_candidates,
                                               const EdgeDuration duration_cutoff,
-                                              const bool inbound) const
+                                              const bool inbound,
+                                              const std::size_t maximum_search_nodes) const
 {
     return routing_algorithms::reachabilitySearch(
-        heaps, *facade, source_candidates, duration_cutoff, inbound);
+        heaps, *facade, source_candidates, duration_cutoff, inbound, maximum_search_nodes);
 }
 
 } // namespace osrm::engine

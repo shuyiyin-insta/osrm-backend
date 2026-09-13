@@ -465,6 +465,21 @@ BOOST_AUTO_TEST_CASE(rejects_an_invalid_ch_graph_once)
     BOOST_CHECK_EQUAL(facade.GetIsochroneTopologicalOrderBuildCount(), 1);
 }
 
+BOOST_AUTO_TEST_CASE(rejects_graphs_above_the_search_node_limit_before_allocating_labels)
+{
+    const SyntheticCHFacade facade{3,
+                                   {{0, 1, EdgeWeight{1}, EdgeDuration{1}, true, false},
+                                    {1, 2, EdgeWeight{1}, EdgeDuration{1}, true, false}}};
+    const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    const auto result = phastOneToAllSearch(facade, {source}, EdgeDuration{10}, 2);
+
+    BOOST_CHECK(result.status == IsochroneSearchStatus::SearchNodeLimitReached);
+    BOOST_CHECK(result.nodes.empty());
+    BOOST_CHECK(result.competitors.empty());
+    BOOST_CHECK_EQUAL(facade.GetIsochroneTopologicalOrderBuildCount(), 0);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 } // namespace osrm::engine::routing_algorithms::ch

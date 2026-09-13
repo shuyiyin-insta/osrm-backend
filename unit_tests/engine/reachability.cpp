@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 
 namespace osrm::engine::routing_algorithms::mld
 {
@@ -13,9 +14,10 @@ class ReachabilityFacade final
 {
   public:
     explicit ReachabilityFacade(const bool include_source_self_loop = false,
-                                const bool reverse_search_graph = false)
+                                const bool reverse_search_graph = false,
+                                const bool overflow_duration = false)
         : m_include_source_self_loop(include_source_self_loop),
-          m_reverse_search_graph(reverse_search_graph)
+          m_reverse_search_graph(reverse_search_graph), m_overflow_duration(overflow_duration)
     {
     }
 
@@ -94,6 +96,8 @@ class ReachabilityFacade final
 
     EdgeDuration GetNodeDuration(NodeID node) const
     {
+        if (m_overflow_duration)
+            return EdgeDuration{std::numeric_limits<EdgeDuration::value_type>::max() - 100};
         constexpr std::array<EdgeDuration, 7> durations = {{{13}, {1}, {1}, {1}, {1}, {1}, {1}}};
         return durations[node];
     }
@@ -117,6 +121,7 @@ class ReachabilityFacade final
     Metric metric;
     bool m_include_source_self_loop;
     bool m_reverse_search_graph;
+    bool m_overflow_duration;
 };
 
 PhantomNode makeSource()
@@ -256,6 +261,30 @@ BOOST_AUTO_TEST_CASE(inbound_search_uses_target_seeds_and_reverse_edges)
     BOOST_REQUIRE(node_one != result.nodes.end());
     BOOST_CHECK_EQUAL(node_one->weight, EdgeWeight{1});
     BOOST_CHECK_EQUAL(node_one->duration, EdgeDuration{2});
+}
+
+BOOST_AUTO_TEST_CASE(reports_duration_arithmetic_overflow)
+{
+    SearchEngineData<Algorithm> heaps;
+    const ReachabilityFacade facade{false, false, true};
+
+    const auto result = reachabilitySearch(
+        heaps, facade, {makeSource()}, EdgeDuration{100});
+
+    BOOST_CHECK(result.status == ReachabilitySearchStatus::ArithmeticOverflow);
+}
+
+BOOST_AUTO_TEST_CASE(rejects_graphs_above_the_search_node_limit)
+{
+    SearchEngineData<Algorithm> heaps;
+    const ReachabilityFacade facade;
+
+    const auto result = reachabilitySearch<FORWARD_DIRECTION>(
+        heaps, facade, {makeSource()}, EdgeDuration{100}, 6);
+
+    BOOST_CHECK(result.status == ReachabilitySearchStatus::SearchNodeLimitReached);
+    BOOST_CHECK(result.nodes.empty());
+    BOOST_CHECK(result.competitors.empty());
 }
 
 BOOST_AUTO_TEST_SUITE_END()
