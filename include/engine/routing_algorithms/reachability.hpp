@@ -58,7 +58,10 @@ template <typename Metric> bool checkedMetric(const std::int64_t value, Metric &
 }
 
 template <bool DIRECTION, typename FacadeT, typename Heap, typename HeapNodeT>
-bool relaxReachabilityEdges(const FacadeT &facade, Heap &heap, const HeapNodeT &heap_node)
+ReachabilitySearchStatus relaxReachabilityEdges(const FacadeT &facade,
+                                                Heap &heap,
+                                                const HeapNodeT &heap_node,
+                                                const std::size_t maximum_search_nodes)
 {
     for (const auto edge : facade.GetBorderEdgeRange(0, heap_node.node))
     {
@@ -85,7 +88,7 @@ bool relaxReachabilityEdges(const FacadeT &facade, Heap &heap, const HeapNodeT &
 
         EdgeWeight weight;
         if (!checkedMetric(candidate_weight, weight))
-            return false;
+            return ReachabilitySearchStatus::ArithmeticOverflow;
 
         const auto candidate_duration =
             from_alias<std::int64_t>(heap_node.data.duration) +
@@ -93,11 +96,14 @@ bool relaxReachabilityEdges(const FacadeT &facade, Heap &heap, const HeapNodeT &
             from_alias<std::int64_t>(facade.GetDurationPenaltyForEdgeID(edge_data.turn_id));
         EdgeDuration duration;
         if (!checkedMetric(candidate_duration, duration))
-            return false;
+            return ReachabilitySearchStatus::ArithmeticOverflow;
+
+        if (!current && heap.Occupancy() >= maximum_search_nodes)
+            return ReachabilitySearchStatus::SearchNodeLimitReached;
 
         insertOrUpdate(heap, target, weight, {heap_node.node, false, duration});
     }
-    return true;
+    return ReachabilitySearchStatus::Complete;
 }
 
 template <bool DIRECTION, typename FacadeT>
@@ -111,14 +117,7 @@ reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
     BOOST_ASSERT(max_duration >= EdgeDuration{0});
 
     ReachabilitySearchResult result;
-    if (facade.GetNumberOfNodes() > maximum_search_nodes)
-    {
-        result.status = ReachabilitySearchStatus::SearchNodeLimitReached;
-        return result;
-    }
-
-    engine_working_data.InitializeOrClearReachabilityThreadLocalStorage(
-        facade.GetNumberOfNodes(), facade.GetMaxBorderNodeID() + 1);
+    engine_working_data.InitializeOrClearReachabilityThreadLocalStorage(facade.GetNumberOfNodes());
     auto &query_heap = *engine_working_data.reachability_heap;
 
     struct SourceNode
@@ -128,8 +127,9 @@ reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
         ReachabilityMultiLayerDijkstraHeapData data;
     };
 
-    const auto insert_source =
-        [&](const NodeID node, const EdgeWeight weight, const EdgeDuration duration)
+    const auto insert_source = [&](const NodeID node,
+                                   const EdgeWeight weight,
+                                   const EdgeDuration duration) -> ReachabilitySearchStatus
     {
         if (!facade.ExcludeNode(node))
         {
@@ -137,9 +137,10 @@ reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
             // label for the edge-based node itself.  Relax it directly into the query heap so a
             // real path that later returns to this node is not discarded as a worse duplicate.
             const SourceNode source_node{node, weight, {node, false, duration}};
-            if (!relaxReachabilityEdges<DIRECTION>(facade, query_heap, source_node))
-                result.status = ReachabilitySearchStatus::ArithmeticOverflow;
+            return relaxReachabilityEdges<DIRECTION>(
+                facade, query_heap, source_node, maximum_search_nodes);
         }
+        return ReachabilitySearchStatus::Complete;
     };
 
     for (const auto &endpoint : endpoint_candidates)
@@ -149,26 +150,30 @@ reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
                                           : endpoint.IsValidForwardTarget();
         if (forward_is_valid)
         {
-            insert_source(endpoint.forward_segment_id.id,
-                          DIRECTION == FORWARD_DIRECTION ? endpoint.GetForwardWeightAsSource()
-                                                         : endpoint.GetForwardWeightAsTarget(),
-                          DIRECTION == FORWARD_DIRECTION ? endpoint.GetForwardDurationAsSource()
-                                                         : endpoint.GetForwardDurationAsTarget());
+            result.status = insert_source(
+                endpoint.forward_segment_id.id,
+                DIRECTION == FORWARD_DIRECTION ? endpoint.GetForwardWeightAsSource()
+                                               : endpoint.GetForwardWeightAsTarget(),
+                DIRECTION == FORWARD_DIRECTION ? endpoint.GetForwardDurationAsSource()
+                                               : endpoint.GetForwardDurationAsTarget());
+            if (!result.isComplete())
+                return result;
         }
         const auto reverse_is_valid = DIRECTION == FORWARD_DIRECTION
                                           ? endpoint.IsValidReverseSource()
                                           : endpoint.IsValidReverseTarget();
         if (reverse_is_valid)
         {
-            insert_source(endpoint.reverse_segment_id.id,
-                          DIRECTION == FORWARD_DIRECTION ? endpoint.GetReverseWeightAsSource()
-                                                         : endpoint.GetReverseWeightAsTarget(),
-                          DIRECTION == FORWARD_DIRECTION ? endpoint.GetReverseDurationAsSource()
-                                                         : endpoint.GetReverseDurationAsTarget());
+            result.status = insert_source(
+                endpoint.reverse_segment_id.id,
+                DIRECTION == FORWARD_DIRECTION ? endpoint.GetReverseWeightAsSource()
+                                               : endpoint.GetReverseWeightAsTarget(),
+                DIRECTION == FORWARD_DIRECTION ? endpoint.GetReverseDurationAsSource()
+                                               : endpoint.GetReverseDurationAsTarget());
+            if (!result.isComplete())
+                return result;
         }
     }
-    if (!result.isComplete())
-        return result;
 
     while (!query_heap.Empty())
     {
@@ -187,11 +192,10 @@ reachabilitySearch(SearchEngineData<Algorithm> &engine_working_data,
                 {heap_node.node, heap_node.weight, heap_node.data.duration});
         }
 
-        if (!relaxReachabilityEdges<DIRECTION>(facade, query_heap, heap_node))
-        {
-            result.status = ReachabilitySearchStatus::ArithmeticOverflow;
+        result.status =
+            relaxReachabilityEdges<DIRECTION>(facade, query_heap, heap_node, maximum_search_nodes);
+        if (!result.isComplete())
             return result;
-        }
     }
 
     return result;

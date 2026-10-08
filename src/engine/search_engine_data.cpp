@@ -188,7 +188,7 @@ void SearchEngineData<MLD>::InitializeOrClearManyToManyThreadLocalStorage(
 }
 
 void SearchEngineData<MLD>::InitializeOrClearReachabilityThreadLocalStorage(
-    unsigned number_of_nodes, unsigned number_of_boundary_nodes)
+    unsigned number_of_nodes)
 {
     if (reachability_heap.get())
     {
@@ -196,8 +196,7 @@ void SearchEngineData<MLD>::InitializeOrClearReachabilityThreadLocalStorage(
     }
     else
     {
-        reachability_heap.reset(
-            new ReachabilityQueryHeap(number_of_nodes, number_of_boundary_nodes));
+        reachability_heap.reset(new ReachabilityQueryHeap(number_of_nodes));
     }
 }
 
