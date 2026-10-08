@@ -23,6 +23,7 @@ engine = osrm.OSRM(
     max_locations_map_matching=3,
     max_results_nearest=1,
     max_isochrone_range=900,
+    max_isochrone_search_nodes=-1,
     max_alternatives=1,
     default_radius="unlimited",
 )
@@ -45,6 +46,9 @@ engine = osrm.OSRM(use_shared_memory=True)
 - **`max_locations_map_matching`** `int` - Max locations in match queries.
 - **`max_results_nearest`** `int` - Max results in nearest queries.
 - **`max_isochrone_range`** `int` - Max isochrone range in seconds.
+- **`max_isochrone_search_nodes`** `int` - Max distinct network labels discovered in an isochrone
+  search, including over-duration competitors. Positive signed 32-bit integer or `-1` for unlimited
+  (default). Also available as a read/write `EngineConfig` property.
 - **`max_alternatives`** `int` - Max alternative routes.
 - **`default_radius`** `float | "unlimited"` - Default search radius in meters.
 
@@ -133,6 +137,11 @@ Inherits all [BaseParameters](#baseparameters).
 
 Computes the region reachable from one coordinate within each supplied elapsed-duration contour.
 The result is a GeoJSON `FeatureCollection` in an `Object`.
+
+The search minimizes routing weight, then tests the selected path's elapsed duration. A small
+contour can require searching an entire connected component. Exceeding `max_isochrone_search_nodes`
+raises `RuntimeError` with code `TooBig`, not a partial result; geometry, rasterization, and output
+quotas remain independent. Output approximates coverage on a fixed 100-metre grid.
 
 ```python
 params = osrm.IsochroneParameters(

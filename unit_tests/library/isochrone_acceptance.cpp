@@ -4,7 +4,9 @@
 #include "osrm/isochrone_parameters.hpp"
 #include "osrm/json_container.hpp"
 #include "osrm/osrm.hpp"
+#include "osrm/route_parameters.hpp"
 #include "osrm/status.hpp"
+#include "osrm/table_parameters.hpp"
 
 #include "util/json_renderer.hpp"
 
@@ -114,6 +116,48 @@ BOOST_AUTO_TEST_CASE(accepts_the_configured_maximum_without_altering_it)
 
     BOOST_REQUIRE(routing_machine.Isochrone(parameters, result) == osrm::Status::Ok);
     checkFeatureCollection(result, parameters);
+}
+
+BOOST_AUTO_TEST_CASE(bounds_isochrone_search_without_affecting_other_services)
+{
+    for (const auto algorithm :
+         {osrm::EngineConfig::Algorithm::CH, osrm::EngineConfig::Algorithm::MLD})
+    {
+        osrm::EngineConfig config;
+        config.storage_config = {algorithm == osrm::EngineConfig::Algorithm::CH
+                                     ? OSRM_TEST_DATA_DIR "/ch/monaco.osrm"
+                                     : OSRM_TEST_DATA_DIR "/mld/monaco.osrm"};
+        config.use_shared_memory = false;
+        config.algorithm = algorithm;
+        config.max_isochrone_search_nodes = 1;
+        const osrm::OSRM limited{config};
+        const auto parameters = makeParameters();
+        osrm::json::Object result;
+
+        for (unsigned attempt = 0; attempt < 2; ++attempt)
+        {
+            BOOST_REQUIRE(limited.Isochrone(parameters, result) == osrm::Status::Error);
+            BOOST_CHECK_EQUAL(std::get<osrm::json::String>(result.values.at("code")).value,
+                              "TooBig");
+            BOOST_CHECK_EQUAL(std::get<osrm::json::String>(result.values.at("message")).value,
+                              "Isochrone search exceeds the configured node limit.");
+
+            osrm::RouteParameters route_parameters;
+            route_parameters.coordinates = get_locations_in_big_component();
+            BOOST_CHECK(limited.Route(route_parameters, result) == osrm::Status::Ok);
+            osrm::TableParameters table_parameters;
+            table_parameters.coordinates = route_parameters.coordinates;
+            BOOST_CHECK(limited.Table(table_parameters, result) == osrm::Status::Ok);
+        }
+
+        for (const auto limit : {-1, 10'000'000})
+        {
+            config.max_isochrone_search_nodes = limit;
+            const osrm::OSRM routing_machine{config};
+            BOOST_REQUIRE(routing_machine.Isochrone(parameters, result) == osrm::Status::Ok);
+            checkFeatureCollection(result, parameters);
+        }
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

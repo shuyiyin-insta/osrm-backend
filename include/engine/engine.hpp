@@ -23,6 +23,7 @@
 
 #include "util/json_container.hpp"
 
+#include <limits>
 #include <memory>
 
 namespace osrm::engine
@@ -59,7 +60,11 @@ class Engine final : public EngineInterface
                        config.max_radius_map_matching,
                        config.default_radius), //
           tile_plugin(),                       //
-          isochrone_plugin(config.default_radius, config.max_isochrone_range)
+          isochrone_plugin(config.default_radius,
+                           config.max_isochrone_range,
+                           config.max_isochrone_search_nodes == -1
+                               ? std::numeric_limits<std::size_t>::max()
+                               : static_cast<std::size_t>(config.max_isochrone_search_nodes))
 
     {
         if (config.use_shared_memory)

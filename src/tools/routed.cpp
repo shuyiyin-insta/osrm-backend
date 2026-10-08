@@ -190,6 +190,9 @@ inline unsigned generateServerProgramOptions(const int argc,
         ("max-isochrone-range",
          value<int>(&config.max_isochrone_range)->default_value(15 * 60),
          "Max. range in seconds supported in isochrone query") //
+        ("max-isochrone-search-nodes",
+         value<int>(&config.max_isochrone_search_nodes)->default_value(10'000'000),
+         "Max. distinct network labels discovered in isochrone search (-1 for unlimited)") //
         ("max-alternatives",
          value<int>(&config.max_alternatives)->default_value(3),
          "Max. number of alternatives supported in the MLD route query") //

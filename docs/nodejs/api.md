@@ -40,6 +40,7 @@ var osrm = new OSRM('network.osrm');
     *   `options.max_radius_map_matching` **[Number][6]?** Max. radius size supported in map matching query (default: 5).
     *   `options.max_results_nearest` **[Number][6]?** Max. results supported in nearest query (default: unlimited).
     *   `options.max_isochrone_range` **[Number][6]?** Max. isochrone range in seconds (default: 900).
+    *   `options.max_isochrone_search_nodes` **[Number][6]?** Max. distinct network labels discovered in isochrone search, including over-duration competitors. Must be `-1` (unlimited, default) or a positive integer within the signed 32-bit range.
     *   `options.max_alternatives` **[Number][6]?** Max. number of alternatives supported in alternative routes query (default: 3).
     *   `options.default_radius` **[Number][6]?** Default radius for queries (default: unlimited).
 
@@ -90,6 +91,11 @@ Returns **[Object][2]** An array of [Waypoint][9] objects representing all waypo
 ### isochrone
 
 Computes the region reachable from one coordinate within each supplied elapsed-duration contour.
+
+The search minimizes routing weight, then tests the selected path's elapsed duration. A small
+contour can therefore require searching an entire component. Exceeding the constructor's
+`max_isochrone_search_nodes` budget reports an error rather than returning partial coverage;
+geometry and output limits remain separate. Contours approximate coverage on a 100-metre grid.
 
 #### Parameters
 

@@ -147,3 +147,79 @@ class TestIsochrone:
                 contours_seconds=[300.0],
                 denoise="0.25",
             )
+
+
+@pytest.mark.parametrize("algorithm,path", [("CH", constants.data_path), ("MLD", mld_data_path)])
+def test_search_node_limit_does_not_affect_route_or_table(algorithm, path):
+    engine = osrm.OSRM(
+        storage_config=path,
+        algorithm=algorithm,
+        use_shared_memory=False,
+        max_isochrone_search_nodes=1,
+    )
+    params = osrm.IsochroneParameters(
+        coordinates=[one_test_coordinate],
+        contours_seconds=[300.0],
+    )
+    for _ in range(2):
+        with pytest.raises(
+            RuntimeError, match="TooBig - Isochrone search exceeds the configured node limit"
+        ):
+            engine.Isochrone(params)
+        assert (
+            engine.Route(osrm.RouteParameters(coordinates=constants.two_test_coordinates))["code"]
+            == "Ok"
+        )
+        assert (
+            engine.Table(osrm.TableParameters(coordinates=constants.two_test_coordinates))["code"]
+            == "Ok"
+        )
+
+
+@pytest.mark.parametrize("algorithm,path", [("CH", constants.data_path), ("MLD", mld_data_path)])
+@pytest.mark.parametrize("limit", [-1, 10_000_000])
+def test_accepts_unlimited_and_large_search_node_limits(algorithm, path, limit):
+    config = osrm.EngineConfig(
+        storage_config=path,
+        algorithm=algorithm,
+        use_shared_memory=False,
+        max_isochrone_search_nodes=limit,
+    )
+    assert config.max_isochrone_search_nodes == limit
+    result = osrm.OSRM(config).Isochrone(
+        osrm.IsochroneParameters(coordinates=[one_test_coordinate], contours_seconds=[300.0])
+    )
+    assert result["code"] == "Ok"
+
+
+def test_search_node_limit_default_and_property_validation():
+    config = osrm.EngineConfig()
+    assert config.max_isochrone_search_nodes == -1
+    for limit in [-1, 1, 2_147_483_647]:
+        config.max_isochrone_search_nodes = limit
+        assert config.IsValid()
+    for limit in [0, -2, -2_147_483_648]:
+        config.max_isochrone_search_nodes = limit
+        assert not config.IsValid()
+
+
+@pytest.mark.parametrize("limit", [0, -2, -2_147_483_648])
+def test_rejects_invalid_search_node_limits(limit):
+    with pytest.raises(RuntimeError, match="Config Parameters are Invalid"):
+        osrm.EngineConfig(max_isochrone_search_nodes=limit)
+    with pytest.raises(RuntimeError, match="Config Parameters are Invalid"):
+        osrm.OSRM(max_isochrone_search_nodes=limit)
+
+
+@pytest.mark.parametrize("limit", ["1", None, 1.5, float("inf"), float("nan"), 2_147_483_648])
+def test_rejects_non_integer_or_out_of_range_search_node_limits(limit):
+    with pytest.raises(
+        RuntimeError, match="Invalid type passed for argument: max_isochrone_search_nodes"
+    ):
+        osrm.EngineConfig(max_isochrone_search_nodes=limit)
+    with pytest.raises(
+        RuntimeError, match="Invalid type passed for argument: max_isochrone_search_nodes"
+    ):
+        osrm.OSRM(max_isochrone_search_nodes=limit)
+    with pytest.raises(TypeError):
+        osrm.EngineConfig().max_isochrone_search_nodes = limit

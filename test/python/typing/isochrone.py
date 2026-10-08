@@ -27,3 +27,8 @@ def coordinate_and_direction_objects() -> osrm.IsochroneParameters:
         contours_seconds=[300.0],
         direction=params.direction,
     )
+
+
+def search_node_budget(config: osrm.EngineConfig) -> int:
+    config.max_isochrone_search_nodes = -1
+    return config.max_isochrone_search_nodes

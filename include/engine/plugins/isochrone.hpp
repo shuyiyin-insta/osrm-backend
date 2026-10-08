@@ -12,8 +12,11 @@ namespace osrm::engine::plugins
 class IsochronePlugin final : public BasePlugin
 {
   public:
-    IsochronePlugin(const std::optional<double> default_radius, const int max_range_seconds)
-        : BasePlugin(default_radius), max_range_seconds(max_range_seconds)
+    IsochronePlugin(const std::optional<double> default_radius,
+                    const int max_range_seconds,
+                    const std::size_t max_search_nodes)
+        : BasePlugin(default_radius), max_range_seconds(max_range_seconds),
+          m_max_search_nodes(max_search_nodes)
     {
     }
 
@@ -22,7 +25,6 @@ class IsochronePlugin final : public BasePlugin
                          osrm::engine::api::ResultT &result) const;
 
   private:
-    static constexpr std::size_t MAX_SEARCH_NODES = 10'000'000;
     static constexpr std::size_t MAX_SEARCH_RECORDS = 100'000;
     static constexpr std::size_t MAX_MATERIALIZED_POINTS = 1'000'000;
     static constexpr std::size_t MAX_RASTERIZATION_STEPS = 5'000'000;
@@ -31,6 +33,7 @@ class IsochronePlugin final : public BasePlugin
     static constexpr std::size_t MAX_CONTOURS = 10;
 
     const int max_range_seconds;
+    const std::size_t m_max_search_nodes;
 };
 
 } // namespace osrm::engine::plugins

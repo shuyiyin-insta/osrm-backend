@@ -87,7 +87,7 @@ Status IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorith
     const auto &endpoint_candidates = snapped_phantoms.front();
 
     const auto native_result = algorithms.IsochroneSearch(
-        endpoint_candidates, maximum_duration, inbound, MAX_SEARCH_NODES);
+        endpoint_candidates, maximum_duration, inbound, m_max_search_nodes);
     switch (native_result.status)
     {
     case routing_algorithms::ReachabilitySearchStatus::Complete:

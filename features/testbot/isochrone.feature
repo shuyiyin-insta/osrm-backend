@@ -197,6 +197,55 @@ Feature: Isochrone service
         Then the isochrone response should be a GeoJSON FeatureCollection with "1" "MultiPolygon" features
         And the isochrone should contain "1" and not contain "b"
 
+    @no_datastore
+    Scenario: Bound isochrone discoveries without restricting other services
+        Given the data load extra arguments "--max-isochrone-search-nodes 1"
+        And the node map
+            """
+            a b c
+            d e f
+            """
+        And the ways
+            | nodes |
+            | abc   |
+            | def   |
+            | ad    |
+            | be    |
+            | cf    |
+
+        When I request /isochrone/v1/testbot/1,1?contours_seconds=20
+        Then the isochrone HTTP status should be 400
+        And status code should be TooBig
+
+        When I request /isochrone/v1/testbot/1,1?contours_seconds=20&direction=inbound
+        Then the isochrone HTTP status should be 400
+        And status code should be TooBig
+
+        When I request /route/v1/testbot/1,1;1.0018,1?overview=false
+        Then status code should be Ok
+
+        When I request /table/v1/testbot/1,1;1.0018,1
+        Then status code should be Ok
+
+    @no_datastore
+    Scenario: Allow operators to disable the isochrone search-node budget
+        Given the data load extra arguments "--max-isochrone-search-nodes -1"
+        And the node map
+            """
+            a b c
+            d e f
+            """
+        And the ways
+            | nodes |
+            | abc   |
+            | def   |
+            | ad    |
+            | be    |
+            | cf    |
+
+        When I request an isochrone from "e" with contours_seconds "20"
+        Then the isochrone response should be a GeoJSON FeatureCollection with "1" "MultiPolygon" features
+
     Scenario: Reject missing, malformed, and out-of-range duration contour requests
         Given the node map
             """

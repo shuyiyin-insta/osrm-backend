@@ -1,5 +1,5 @@
 import test from 'tape';
-import { OSRM, mld_data_path, two_test_coordinates } from './constants.js';
+import { OSRM, data_path, mld_data_path, two_test_coordinates } from './constants.js';
 
 test('isochrone: returns a GeoJSON FeatureCollection on MLD', (assert) => {
   assert.plan(6);
@@ -117,3 +117,49 @@ test('isochrone: rejects flatbuffers output asynchronously', (assert) => {
     assert.equal(err.message, 'The isochrone service only supports JSON/GeoJSON output.');
   });
 });
+
+test('isochrone: validates its search-node limit independently of other limits', (assert) => {
+  const invalidLimits = [0, -2, -2147483648, 2147483648, 1.5, Infinity, NaN, '1', true, null];
+  assert.plan(invalidLimits.length + 3);
+  for (const max_isochrone_search_nodes of invalidLimits) {
+    assert.throws(() => {
+      new OSRM({path: data_path, max_isochrone_search_nodes});
+    }, /max_isochrone_search_nodes must be -1 or a positive integral number within int range/);
+  }
+  for (const max_isochrone_search_nodes of [-1, 1, 2147483647]) {
+    assert.ok(new OSRM({path: data_path, max_isochrone_search_nodes, max_locations_trip: 1}));
+  }
+});
+
+for (const [algorithm, path] of [['CH', data_path], ['MLD', mld_data_path]]) {
+  test(`isochrone: ${algorithm} search limit does not affect route or table`, (assert) => {
+    assert.plan(6);
+    const osrm = new OSRM({path, algorithm, max_isochrone_search_nodes: 1});
+    const options = {coordinates: [two_test_coordinates[0]], contours_seconds: [300]};
+    osrm.isochrone(options, (err) => {
+      assert.equal(err?.message, 'TooBig');
+      osrm.route({coordinates: two_test_coordinates}, (routeErr, route) => {
+        assert.ifError(routeErr);
+        assert.ok(route.routes.length > 0);
+        osrm.table({coordinates: two_test_coordinates}, (tableErr, table) => {
+          assert.ifError(tableErr);
+          assert.equal(table.durations.length, 2);
+          osrm.isochrone(options, (repeatErr) => {
+            assert.equal(repeatErr?.message, 'TooBig');
+          });
+        });
+      });
+    });
+  });
+
+  for (const max_isochrone_search_nodes of [-1, 10000000]) {
+    test(`isochrone: ${algorithm} accepts search limit ${max_isochrone_search_nodes}`, (assert) => {
+      assert.plan(2);
+      const osrm = new OSRM({path, algorithm, max_isochrone_search_nodes});
+      osrm.isochrone({coordinates: [two_test_coordinates[0]], contours_seconds: [300]}, (err, result) => {
+        assert.ifError(err);
+        assert.equal(result.features.length, 1);
+      });
+    });
+  }
+}
