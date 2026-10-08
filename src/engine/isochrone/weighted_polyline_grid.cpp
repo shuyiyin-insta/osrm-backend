@@ -178,18 +178,6 @@ RasterizationError rasterizationExtentError(const GridBounds &bounds,
     return RasterizationError::None;
 }
 
-std::size_t cellIndex(const double value,
-                      const double origin,
-                      const double cell_size,
-                      const std::size_t dimension)
-{
-    BOOST_ASSERT(dimension > 0);
-    const auto unbounded_index =
-        static_cast<std::int64_t>(std::floor((value - origin) / cell_size));
-    return static_cast<std::size_t>(
-        std::clamp<std::int64_t>(unbounded_index, 0, static_cast<std::int64_t>(dimension - 1)));
-}
-
 double gridPosition(const double value,
                     const double origin,
                     const double cell_size,
@@ -212,6 +200,8 @@ struct PositionInterval
 {
     double begin;
     double end;
+    bool include_begin = true;
+    bool include_end = true;
 };
 
 struct SelectedSegment
@@ -233,6 +223,10 @@ long double fractionAt(const PolylineSegment &segment, const double position)
 std::pair<long double, long double> labelAt(const PolylineSegment &segment, const double position)
 {
     const auto fraction = fractionAt(segment, position);
+    if (fraction == 0.)
+        return {segment.from->weight, segment.from->duration};
+    if (fraction == 1.)
+        return {segment.to->weight, segment.to->duration};
     return {segment.from->weight +
                 (static_cast<long double>(segment.to->weight) - segment.from->weight) * fraction,
             segment.from->duration +
@@ -282,6 +276,17 @@ std::optional<PositionInterval> losingInterval(const PolylineSegment &candidate,
 
     const auto candidate_end = labelAt(candidate, overlap.end);
     const auto competitor_end = labelAt(competitor, overlap.end);
+    const auto make_interval = [&](const double begin, const double end)
+    {
+        const auto competitor_wins_at = [&](const double position)
+        {
+            const auto candidate_label = labelAt(candidate, position);
+            const auto competitor_label = labelAt(competitor, position);
+            return competitor_label < candidate_label ||
+                   (competitor_label == candidate_label && competitor_first);
+        };
+        return PositionInterval{begin, end, competitor_wins_at(begin), competitor_wins_at(end)};
+    };
     auto begin_difference = candidate_begin.first - competitor_begin.first;
     auto end_difference = candidate_end.first - competitor_end.first;
     if (begin_difference == 0. && end_difference == 0.)
@@ -292,15 +297,23 @@ std::optional<PositionInterval> losingInterval(const PolylineSegment &candidate,
             return competitor_first ? std::optional<PositionInterval>{overlap} : std::nullopt;
     }
     if (begin_difference <= 0. && end_difference <= 0.)
+    {
+        if (begin_difference == 0. && (competitor_begin < candidate_begin ||
+                                       (competitor_begin == candidate_begin && competitor_first)))
+            return PositionInterval{overlap.begin, overlap.begin};
+        if (end_difference == 0. && (competitor_end < candidate_end ||
+                                     (competitor_end == candidate_end && competitor_first)))
+            return PositionInterval{overlap.end, overlap.end};
         return std::nullopt;
+    }
     if (begin_difference >= 0. && end_difference >= 0.)
-        return overlap;
+        return make_interval(overlap.begin, overlap.end);
 
     const auto crossing = static_cast<double>(
         overlap.begin + (static_cast<long double>(overlap.end) - overlap.begin) * begin_difference /
                             (begin_difference - end_difference));
-    return begin_difference > 0. ? PositionInterval{overlap.begin, crossing}
-                                 : PositionInterval{crossing, overlap.end};
+    return begin_difference > 0. ? make_interval(overlap.begin, crossing)
+                                 : make_interval(crossing, overlap.end);
 }
 
 RasterizationError prepareSegments(const std::span<const WeightedPolyline> polylines,
@@ -353,10 +366,22 @@ RasterizationError prepareSegments(const std::span<const WeightedPolyline> polyl
                                      (options.maximum_duration - begin_duration) /
                                      (end_duration - begin_duration));
             if (begin_duration > options.maximum_duration)
+            {
+                interval.include_begin = crossing == interval.end     ? interval.include_end
+                                         : crossing == interval.begin ? interval.include_begin
+                                                                      : true;
                 interval.begin = crossing;
+            }
             else
+            {
+                interval.include_end = crossing == interval.begin ? interval.include_begin
+                                       : crossing == interval.end ? interval.include_end
+                                                                  : true;
                 interval.end = crossing;
+            }
         }
+        if (interval.begin == interval.end && (!interval.include_begin || !interval.include_end))
+            return true;
         if (selected.size() >= options.maximum_rasterization_steps)
             return false;
         selected.push_back({segment_index, interval});
@@ -418,28 +443,46 @@ RasterizationError prepareSegments(const std::span<const WeightedPolyline> polyl
                     break;
                 if (competitor_index == candidate_index)
                     continue;
+                if (comparisons >= options.maximum_rasterization_steps)
+                    return RasterizationError::TooBig;
+                const PositionInterval overlap{std::max(candidate.begin(), competitor.begin()),
+                                               std::min(candidate.end(), competitor.end())};
+                const auto losing =
+                    overlap.begin <= overlap.end
+                        ? losingInterval(
+                              candidate, competitor, overlap, competitor_index < candidate_index)
+                        : std::nullopt;
                 remaining.clear();
                 for (const auto interval : intervals)
                 {
                     if (comparisons >= options.maximum_rasterization_steps)
                         return RasterizationError::TooBig;
                     ++comparisons;
-                    const PositionInterval overlap{std::max(interval.begin, competitor.begin()),
-                                                   std::min(interval.end, competitor.end())};
-                    const auto losing = overlap.begin <= overlap.end
-                                            ? losingInterval(candidate,
-                                                             competitor,
-                                                             overlap,
-                                                             competitor_index < candidate_index)
-                                            : std::nullopt;
-                    if (!losing)
+                    if (!losing || interval.end < losing->begin || losing->end < interval.begin)
                         remaining.push_back(interval);
                     else
                     {
+                        const auto wins_at = [&](const double position)
+                        {
+                            return position < losing->begin || losing->end < position ||
+                                   (position == losing->begin && !losing->include_begin) ||
+                                   (position == losing->end && !losing->include_end);
+                        };
                         if (interval.begin < losing->begin)
-                            remaining.push_back({interval.begin, losing->begin});
+                            remaining.push_back({interval.begin,
+                                                 losing->begin,
+                                                 interval.include_begin,
+                                                 wins_at(losing->begin)});
+                        else if (interval.include_begin && wins_at(interval.begin))
+                            remaining.push_back({interval.begin, interval.begin});
                         if (losing->end < interval.end)
-                            remaining.push_back({losing->end, interval.end});
+                            remaining.push_back({losing->end,
+                                                 interval.end,
+                                                 wins_at(losing->end),
+                                                 interval.include_end});
+                        else if (interval.end != interval.begin && interval.include_end &&
+                                 wins_at(interval.end))
+                            remaining.push_back({interval.end, interval.end});
                     }
                 }
                 intervals.swap(remaining);
@@ -458,28 +501,46 @@ RasterizationError prepareSegments(const std::span<const WeightedPolyline> polyl
 double durationAt(const WeightedPolylinePoint &from,
                   const WeightedPolylinePoint &to,
                   const double fraction)
-{ return from.duration + (to.duration - from.duration) * fraction; }
+{
+    if (fraction == 0.)
+        return from.duration;
+    if (fraction == 1.)
+        return to.duration;
+    return from.duration + (to.duration - from.duration) * fraction;
+}
 
 template <typename UpdateCell>
 bool rasterizeSegment(const WeightedGrid &grid,
                       const WeightedPolylinePoint &from,
                       const WeightedPolylinePoint &to,
+                      const bool include_from,
+                      const bool include_to,
                       UpdateCell &&update_cell)
 {
     const auto projection = makeProjection(grid);
     const auto from_point = projection.project(from.coordinate);
     const auto to_point = projection.project(to.coordinate);
-    const auto x0 = gridPosition(from_point.x, grid.origin_x, grid.cell_size, grid.width);
-    const auto y0 = gridPosition(from_point.y, grid.origin_y, grid.cell_size, grid.height);
-    const auto x1 = gridPosition(to_point.x, grid.origin_x, grid.cell_size, grid.width);
-    const auto y1 = gridPosition(to_point.y, grid.origin_y, grid.cell_size, grid.height);
+    auto x0 = gridPosition(from_point.x, grid.origin_x, grid.cell_size, grid.width);
+    auto y0 = gridPosition(from_point.y, grid.origin_y, grid.cell_size, grid.height);
+    auto x1 = gridPosition(to_point.x, grid.origin_x, grid.cell_size, grid.width);
+    auto y1 = gridPosition(to_point.y, grid.origin_y, grid.cell_size, grid.height);
+    if (!include_from)
+    {
+        x0 = std::nextafter(x0, x1);
+        y0 = std::nextafter(y0, y1);
+    }
+    if (!include_to)
+    {
+        x1 = std::nextafter(x1, x0);
+        y1 = std::nextafter(y1, y0);
+    }
 
     const auto dx = x1 - x0;
     const auto dy = y1 - y0;
-    auto x = cellIndex(from_point.x, grid.origin_x, grid.cell_size, grid.width);
-    auto y = cellIndex(from_point.y, grid.origin_y, grid.cell_size, grid.height);
-    const auto end_x = cellIndex(to_point.x, grid.origin_x, grid.cell_size, grid.width);
-    const auto end_y = cellIndex(to_point.y, grid.origin_y, grid.cell_size, grid.height);
+    auto x = static_cast<std::size_t>(std::floor(x0));
+    auto y = static_cast<std::size_t>(std::floor(y0));
+    const auto end_x = static_cast<std::size_t>(std::floor(x1));
+    const auto end_y = static_cast<std::size_t>(std::floor(y1));
 
     if (dx == 0. && dy == 0.)
     {
@@ -714,6 +775,10 @@ rasterizeWeightedPolylines(const std::span<const WeightedPolyline> polylines,
         auto to = pointAt(segments[segment.segment], segment.interval.end);
         from.duration = std::min(from.duration, options.maximum_duration);
         to.duration = std::min(to.duration, options.maximum_duration);
+        if (!segment.interval.include_begin)
+            from.duration = std::nextafter(from.duration, to.duration);
+        if (!segment.interval.include_end)
+            to.duration = std::nextafter(to.duration, from.duration);
         return std::pair{from, to};
     };
 
@@ -811,7 +876,12 @@ rasterizeWeightedPolylines(const std::span<const WeightedPolyline> polylines,
     for (const auto segment : selected)
     {
         const auto [from, to] = endpoints(segment);
-        if (!rasterizeSegment(grid, from, to, update_cell))
+        if (!rasterizeSegment(grid,
+                              from,
+                              to,
+                              segment.interval.include_begin,
+                              segment.interval.include_end,
+                              update_cell))
             return {{}, RasterizationError::TooBig};
     }
     return {std::move(grid), RasterizationError::None};
