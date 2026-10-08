@@ -79,6 +79,7 @@ Napi::Object Engine::Init(Napi::Env env, Napi::Object exports)
  * @param {Number} [options.max_radius_map_matching] Max. radius size supported in map matching query (default: 5).
  * @param {Number} [options.max_results_nearest] Max. results supported in nearest query (default: unlimited).
  * @param {Number} [options.max_isochrone_range] Max. isochrone range in seconds (default: 900).
+ * @param {Number} [options.max_isochrone_search_nodes] Max. distinct network labels discovered in isochrone search, including over-duration competitors. Must be `-1` (unlimited, default) or a positive integer within the signed 32-bit range.
  * @param {Number} [options.max_alternatives] Max. number of alternatives supported in alternative routes query (default: 3).
  * @param {Number} [options.default_radius] Default radius for queries (default: unlimited).
  *
@@ -321,6 +322,11 @@ Napi::Value Engine::route(const Napi::CallbackInfo &info)
 // clang-format off
 /**
  * Computes the region reachable from one coordinate within each supplied elapsed-duration contour.
+ *
+ * The search minimizes routing weight, then tests the selected path's elapsed duration. A small
+ * contour can therefore require searching an entire component. Exceeding the constructor's
+ * `max_isochrone_search_nodes` budget reports an error rather than returning partial coverage;
+ * geometry and output limits remain separate. Contours approximate coverage on a 100-metre grid.
  *
  * @name isochrone
  * @memberof OSRM

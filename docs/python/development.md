@@ -279,6 +279,12 @@ With `mypy >= 1.16.1` installed, check the isochrone constructor and direction a
 MYPYPATH=src/python mypy --config-file=test/python/typing/mypy.ini test/python/typing/isochrone.py
 ```
 
+`test/python/test_isochrone.py` also covers the `EngineConfig.max_isochrone_search_nodes` property
+and constructor keyword: unlimited by default, positive limits count distinct discovered network
+labels including over-duration competitors, and budget exhaustion must not affect route or table
+queries on the same instance. Run these tests against both CH and MLD datasets after changing
+search-budget handling.
+
 ## Releasing
 
 Releases are driven by the monthly release workflow

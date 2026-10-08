@@ -288,6 +288,19 @@ Only JSON/GeoJSON output is supported; a `.flatbuffers` request returns `NotImpl
 Durations use OSRM's decisecond precision. Values too small to represent return `InvalidValue`.
 Each query remains subject to the server's configured isochrone range limit.
 
+`osrm-routed --max-isochrone-search-nodes` limits distinct discovered network labels,
+including competitors whose duration exceeds the requested contours; repeated updates to one
+label do not consume additional allowance. Queued and settled labels both count; this is not a
+total memory or latency bound. The default is `10000000`; `-1` disables this search limit.
+Exhausting it returns `TooBig`, not a partial contour. Geometry, rasterization, and output
+limits remain independent, so disabling the search limit does not disable those safeguards.
+
+Routing weight can differ from elapsed duration. Correct winner selection can require searching
+an entire connected component, even for a small contour; duration-only pruning is not safe for
+arbitrary profile weights. CH also uses O(N) label storage and an O(N + E) downward sweep over
+its graph, independently of the number of discovered labels. Output is a coverage approximation
+on a fixed 100-metre grid, not an exact continuous reachable-region boundary.
+
 In addition to the [general options](#general-options), this service supports:
 
 | Option | Values | Description |

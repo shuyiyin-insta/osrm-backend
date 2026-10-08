@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <variant>
@@ -316,6 +317,7 @@ inline engine_config_ptr argumentsToEngineConfig(const Napi::CallbackInfo &args)
     auto max_locations_map_matching = params.Get("max_locations_map_matching");
     auto max_results_nearest = params.Get("max_results_nearest");
     auto max_isochrone_range = params.Get("max_isochrone_range");
+    auto max_isochrone_search_nodes = params.Get("max_isochrone_search_nodes");
     auto max_alternatives = params.Get("max_alternatives");
     auto max_radius_map_matching = params.Get("max_radius_map_matching");
     auto default_radius = params.Get("default_radius");
@@ -349,6 +351,24 @@ inline engine_config_ptr argumentsToEngineConfig(const Napi::CallbackInfo &args)
     {
         ThrowError(args.Env(), "max_isochrone_range must be an integral number");
         return engine_config_ptr();
+    }
+    if (!max_isochrone_search_nodes.IsUndefined())
+    {
+        constexpr auto error_message =
+            "max_isochrone_search_nodes must be -1 or a positive integral number within int range";
+        if (!max_isochrone_search_nodes.IsNumber())
+        {
+            ThrowError(args.Env(), error_message);
+            return engine_config_ptr();
+        }
+        const auto limit = max_isochrone_search_nodes.ToNumber().DoubleValue();
+        if (!std::isfinite(limit) || std::floor(limit) != limit || (limit != -1. && limit <= 0.) ||
+            limit > std::numeric_limits<int>::max())
+        {
+            ThrowError(args.Env(), error_message);
+            return engine_config_ptr();
+        }
+        engine_config->max_isochrone_search_nodes = static_cast<int>(limit);
     }
     if (!max_alternatives.IsUndefined() && !max_alternatives.IsNumber())
     {

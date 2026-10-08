@@ -77,6 +77,9 @@ void populate_cfg_from_kwargs(const nb::kwargs &kwargs, EngineConfig &config)
                    {"max_isochrone_range",
                     [&config](const std::pair<nb::handle, nb::handle> &val)
                     { assign_val(config.max_isochrone_range, val); }},
+                   {"max_isochrone_search_nodes",
+                    [&config](const std::pair<nb::handle, nb::handle> &val)
+                    { assign_val(config.max_isochrone_search_nodes, val); }},
                    {"default_radius",
                     [&config](const std::pair<nb::handle, nb::handle> &val)
                     {

@@ -37,6 +37,10 @@ class EngineConfig:
     @max_isochrone_range.setter
     def max_isochrone_range(self, arg: int, /) -> None: ...
     @property
+    def max_isochrone_search_nodes(self) -> int: ...
+    @max_isochrone_search_nodes.setter
+    def max_isochrone_search_nodes(self, arg: int, /) -> None: ...
+    @property
     def default_radius(self) -> float: ...
     @default_radius.setter
     def default_radius(self, arg: float, /) -> None: ...
@@ -784,6 +788,7 @@ class OSRM:
                                 max_locations_map_matching = 3,
                                 max_results_nearest = 1,
                                 max_isochrone_range = 900,
+                                max_isochrone_search_nodes = -1,
                                 max_alternatives = 1,
                                 default_radius = 'unlimited'
                             )

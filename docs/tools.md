@@ -158,10 +158,19 @@ osrm-routed <base.osrm> [options]
 | `--max-matching-size <n>` | `100` | Maximum number of locations in a map-matching query. |
 | `--max-nearest-size <n>` | `100` | Maximum number of results in a nearest query. |
 | `--max-isochrone-range <s>` | `900` | Maximum isochrone range in seconds (15 minutes). |
+| `--max-isochrone-search-nodes <n>` | `10000000` | Maximum distinct network labels discovered by an isochrone search; positive integer or `-1` for unlimited. |
 | `--max-alternatives <n>` | `3` | Maximum number of alternative routes (MLD only). |
 | `--max-matching-radius <m>` | `-1` (unlimited) | Maximum search radius in metres for map-matching. |
 | `--default-radius <m>` | `-1` (unlimited) | Default snap radius for all queries. |
 | `--max-header-size <bytes>` | `0` (auto) | Maximum HTTP header size in bytes. |
+
+The isochrone search budget includes over-duration competitors needed to select the lowest-weight
+path. Queued and settled labels both count; repeated updates to the same network label count only
+once. This is not a total memory or latency bound. Exhaustion returns `TooBig`;
+geometry, rasterization, and output quotas remain separate. Arbitrary routing weights can require
+searching an entire component, so a small duration range does not necessarily mean a small search.
+CH retains O(N) label storage and an O(N + E) downward sweep even with a small discovery budget.
+Isochrone polygons approximate coverage using a fixed 100-metre grid.
 
 ---
 
