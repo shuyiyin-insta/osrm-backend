@@ -169,6 +169,41 @@ class ArithmeticReachabilityFacade final
     { return DurationPenalties[turn_id]; }
 };
 
+class SparseReachabilityFacade final
+{
+  public:
+    unsigned NumberOfNodes = 10'000'001;
+    bool HasEdges = true;
+    bool Reverse = false;
+
+    unsigned GetNumberOfNodes() const { return NumberOfNodes; }
+    unsigned GetMaxBorderNodeID() const { return NumberOfNodes - 1; }
+
+    auto GetBorderEdgeRange(LevelID level, NodeID node) const
+    {
+        BOOST_ASSERT(level == 0);
+        if (HasEdges && node < 2)
+            return util::irange<EdgeID>(node, node + 1);
+        return util::irange<EdgeID>(0, 0);
+    }
+
+    bool IsForwardEdge(EdgeID) const { return !Reverse; }
+    bool IsBackwardEdge(EdgeID) const { return Reverse; }
+    bool ExcludeNode(NodeID) const { return false; }
+    NodeID GetTarget(EdgeID edge) const { return edge + 1; }
+
+    const customizer::EdgeBasedGraphEdgeData &GetEdgeData(EdgeID edge) const
+    {
+        static const std::array<customizer::EdgeBasedGraphEdgeData, 2> edges = {{{0}, {1}}};
+        return edges[edge];
+    }
+
+    EdgeWeight GetNodeWeight(NodeID) const { return EdgeWeight{1}; }
+    EdgeDuration GetNodeDuration(NodeID) const { return EdgeDuration{10}; }
+    TurnPenalty GetWeightPenaltyForEdgeID(NodeID) const { return TurnPenalty{0}; }
+    TurnPenalty GetDurationPenaltyForEdgeID(NodeID) const { return TurnPenalty{0}; }
+};
+
 PhantomNode makeSource()
 {
     struct Seed
@@ -416,17 +451,141 @@ BOOST_AUTO_TEST_CASE(reports_unrepresentable_improving_duration_labels)
     BOOST_CHECK(result.status == ReachabilitySearchStatus::ArithmeticOverflow);
 }
 
-BOOST_AUTO_TEST_CASE(rejects_graphs_above_the_search_node_limit)
+BOOST_AUTO_TEST_CASE(bounds_discoveries_on_a_large_loaded_map_and_resets_between_queries)
+{
+    SearchEngineData<Algorithm> heaps;
+    const SparseReachabilityFacade facade;
+    const auto source = makeZeroOffsetSource();
+
+    const auto limited =
+        reachabilitySearch<FORWARD_DIRECTION>(heaps, facade, {source}, EdgeDuration{20}, 1);
+    BOOST_CHECK(limited.status == ReachabilitySearchStatus::SearchNodeLimitReached);
+    BOOST_REQUIRE(heaps.reachability_heap != nullptr);
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 1);
+
+    const auto result =
+        reachabilitySearch<FORWARD_DIRECTION>(heaps, facade, {source}, EdgeDuration{20}, 2);
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 2);
+    BOOST_CHECK(result.competitors.empty());
+    BOOST_CHECK_EQUAL(result.nodes[0].node, 1);
+    BOOST_CHECK_EQUAL(result.nodes[0].weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(result.nodes[0].duration, EdgeDuration{10});
+    BOOST_CHECK_EQUAL(result.nodes[1].node, 2);
+    BOOST_CHECK_EQUAL(result.nodes[1].weight, EdgeWeight{2});
+    BOOST_CHECK_EQUAL(result.nodes[1].duration, EdgeDuration{20});
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 2);
+
+    const auto zero =
+        reachabilitySearch<FORWARD_DIRECTION>(heaps, facade, {source}, EdgeDuration{20}, 0);
+    BOOST_CHECK(zero.status == ReachabilitySearchStatus::SearchNodeLimitReached);
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 0);
+}
+
+BOOST_AUTO_TEST_CASE(inbound_counts_settled_nodes_towards_the_search_budget)
+{
+    SearchEngineData<Algorithm> heaps;
+    SparseReachabilityFacade facade;
+    facade.Reverse = true;
+
+    const auto limited =
+        reachabilitySearch<REVERSE_DIRECTION>(heaps, facade, {makeTarget()}, EdgeDuration{20}, 1);
+    BOOST_CHECK(limited.status == ReachabilitySearchStatus::SearchNodeLimitReached);
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 1);
+
+    const auto complete =
+        reachabilitySearch<REVERSE_DIRECTION>(heaps, facade, {makeTarget()}, EdgeDuration{20}, 2);
+    BOOST_REQUIRE(complete.isComplete());
+    BOOST_CHECK_EQUAL(complete.nodes.size(), 2);
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 2);
+}
+
+BOOST_AUTO_TEST_CASE(counts_initial_source_fanout_before_heap_insertion)
 {
     SearchEngineData<Algorithm> heaps;
     const ReachabilityFacade facade;
 
     const auto result =
-        reachabilitySearch<FORWARD_DIRECTION>(heaps, facade, {makeSource()}, EdgeDuration{100}, 6);
+        reachabilitySearch<FORWARD_DIRECTION>(heaps, facade, {makeSource()}, EdgeDuration{100}, 2);
 
     BOOST_CHECK(result.status == ReachabilitySearchStatus::SearchNodeLimitReached);
     BOOST_CHECK(result.nodes.empty());
     BOOST_CHECK(result.competitors.empty());
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 2);
+}
+
+BOOST_AUTO_TEST_CASE(counts_over_duration_competitors)
+{
+    SearchEngineData<Algorithm> heaps;
+    const SparseReachabilityFacade facade;
+    const auto source = makeZeroOffsetSource();
+
+    const auto limited =
+        reachabilitySearch<FORWARD_DIRECTION>(heaps, facade, {source}, EdgeDuration{0}, 1);
+    BOOST_CHECK(limited.status == ReachabilitySearchStatus::SearchNodeLimitReached);
+    BOOST_CHECK(limited.nodes.empty());
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 1);
+
+    const auto complete =
+        reachabilitySearch<FORWARD_DIRECTION>(heaps, facade, {source}, EdgeDuration{0}, 2);
+    BOOST_REQUIRE(complete.isComplete());
+    BOOST_CHECK(complete.nodes.empty());
+    BOOST_CHECK_EQUAL(complete.competitors.size(), 2);
+}
+
+BOOST_AUTO_TEST_CASE(does_not_count_duplicate_sources_or_label_improvements_twice)
+{
+    SearchEngineData<Algorithm> heaps;
+    ArithmeticReachabilityFacade facade;
+    facade.WeightPenalties[1] = TurnPenalty{10};
+    const auto source = makeZeroOffsetSource();
+
+    const auto result =
+        reachabilitySearch<FORWARD_DIRECTION>(heaps, facade, {source, source}, EdgeDuration{3}, 3);
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 3);
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 3);
+    const auto target = std::find_if(
+        result.nodes.begin(), result.nodes.end(), [](const auto &node) { return node.node == 3; });
+    BOOST_REQUIRE(target != result.nodes.end());
+    BOOST_CHECK_EQUAL(target->weight, EdgeWeight{3});
+    BOOST_CHECK_EQUAL(target->duration, EdgeDuration{3});
+}
+
+BOOST_AUTO_TEST_CASE(counts_phantom_reentry_but_not_the_virtual_source)
+{
+    SearchEngineData<Algorithm> heaps;
+    SparseReachabilityFacade isolated;
+    isolated.HasEdges = false;
+
+    const auto empty = reachabilitySearch<FORWARD_DIRECTION>(
+        heaps, isolated, {makeZeroOffsetSource()}, EdgeDuration{10}, 0);
+    BOOST_REQUIRE(empty.isComplete());
+    BOOST_CHECK(empty.nodes.empty());
+    BOOST_CHECK(empty.competitors.empty());
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 0);
+
+    const ReachabilityFacade without_loop;
+    const auto base = reachabilitySearch<FORWARD_DIRECTION>(
+        heaps, without_loop, {makeSource()}, EdgeDuration{100}, 4);
+    BOOST_REQUIRE(base.isComplete());
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 4);
+
+    const ReachabilityFacade loop{true};
+    const auto limited =
+        reachabilitySearch<FORWARD_DIRECTION>(heaps, loop, {makeSource()}, EdgeDuration{100}, 4);
+    BOOST_CHECK(limited.status == ReachabilitySearchStatus::SearchNodeLimitReached);
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 4);
+
+    const auto complete =
+        reachabilitySearch<FORWARD_DIRECTION>(heaps, loop, {makeSource()}, EdgeDuration{100}, 5);
+    BOOST_REQUIRE(complete.isComplete());
+    BOOST_CHECK_EQUAL(heaps.reachability_heap->Occupancy(), 5);
+    BOOST_CHECK_EQUAL(std::count_if(complete.nodes.begin(),
+                                    complete.nodes.end(),
+                                    [](const auto &node) { return node.node == 0; }),
+                      1);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

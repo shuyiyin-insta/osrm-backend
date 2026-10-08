@@ -31,31 +31,32 @@ class SyntheticCHFacade
 {
   public:
     SyntheticCHFacade(const unsigned number_of_nodes, const std::initializer_list<Edge> input_edges)
-        : m_offsets(number_of_nodes + 1, 0), m_edges(input_edges)
+        : m_number_of_nodes(number_of_nodes), m_edges(input_edges)
     {
         std::sort(m_edges.begin(),
                   m_edges.end(),
                   [](const Edge &lhs, const Edge &rhs)
                   { return std::tie(lhs.source, lhs.target) < std::tie(rhs.source, rhs.target); });
-
-        for (const auto &edge : m_edges)
-        {
-            ++m_offsets[edge.source + 1];
-        }
-        for (unsigned node = 1; node < m_offsets.size(); ++node)
-            m_offsets[node] += m_offsets[node - 1];
     }
 
-    unsigned GetNumberOfNodes() const { return m_offsets.size() - 1; }
+    unsigned GetNumberOfNodes() const { return m_number_of_nodes; }
     NodeID GetTarget(const Edge &edge) const { return edge.target; }
     const Edge &GetEdgeData(const Edge &edge) const { return edge; }
     std::span<const Edge> GetAdjacentEdgeRange(const NodeID node) const
     {
-        const auto begin = m_offsets[node];
-        const auto end = m_offsets[node + 1];
-        if (begin == end)
+        const auto first = std::lower_bound(m_edges.begin(),
+                                            m_edges.end(),
+                                            node,
+                                            [](const Edge &edge, const NodeID source)
+                                            { return edge.source < source; });
+        const auto last = std::upper_bound(first,
+                                           m_edges.end(),
+                                           node,
+                                           [](const NodeID source, const Edge &edge)
+                                           { return source < edge.source; });
+        if (first == last)
             return {};
-        return {m_edges.data() + begin, static_cast<std::size_t>(end - begin)};
+        return {&*first, static_cast<std::size_t>(last - first)};
     }
 
     const IsochroneCHTopologicalOrder *GetIsochroneTopologicalOrder() const
@@ -76,7 +77,7 @@ class SyntheticCHFacade
     { return m_isochrone_topological_order_build_count; }
 
   private:
-    std::vector<unsigned> m_offsets;
+    unsigned m_number_of_nodes;
     std::vector<Edge> m_edges;
     mutable std::once_flag m_isochrone_topological_order_once;
     mutable std::optional<IsochroneCHTopologicalOrder> m_isochrone_topological_order;
@@ -574,19 +575,232 @@ BOOST_AUTO_TEST_CASE(rejects_an_invalid_ch_graph_once)
     BOOST_CHECK_EQUAL(facade.GetIsochroneTopologicalOrderBuildCount(), 1);
 }
 
-BOOST_AUTO_TEST_CASE(rejects_graphs_above_the_search_node_limit_before_allocating_labels)
+BOOST_AUTO_TEST_CASE(bounds_discoveries_on_a_large_loaded_map)
+{
+    const SyntheticCHFacade facade{10'000'001,
+                                   {{0, 1, EdgeWeight{1}, EdgeDuration{10}, true, false},
+                                    {1, 2, EdgeWeight{1}, EdgeDuration{10}, true, false}}};
+    const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    const auto result = phastOneToAllSearch(facade, {source}, EdgeDuration{20}, 2);
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 2);
+    BOOST_CHECK(result.competitors.empty());
+    const auto *first = findNode(result, 1);
+    const auto *second = findNode(result, 2);
+    BOOST_REQUIRE(first != nullptr);
+    BOOST_REQUIRE(second != nullptr);
+    BOOST_CHECK_EQUAL(first->weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(first->duration, EdgeDuration{10});
+    BOOST_CHECK_EQUAL(second->weight, EdgeWeight{2});
+    BOOST_CHECK_EQUAL(second->duration, EdgeDuration{20});
+
+    const auto limited = phastOneToAllSearch(facade, {source}, EdgeDuration{20}, 1);
+    BOOST_CHECK(limited.status == IsochroneSearchStatus::SearchNodeLimitReached);
+    BOOST_CHECK(limited.nodes.empty());
+    BOOST_CHECK(limited.competitors.empty());
+    BOOST_CHECK_EQUAL(facade.GetIsochroneTopologicalOrderBuildCount(), 1);
+}
+
+BOOST_AUTO_TEST_CASE(counts_initial_source_fanout_before_heap_insertion)
 {
     const SyntheticCHFacade facade{3,
                                    {{0, 1, EdgeWeight{1}, EdgeDuration{1}, true, false},
-                                    {1, 2, EdgeWeight{1}, EdgeDuration{1}, true, false}}};
+                                    {0, 2, EdgeWeight{1}, EdgeDuration{1}, true, false}}};
     const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
 
-    const auto result = phastOneToAllSearch(facade, {source}, EdgeDuration{10}, 2);
+    const auto result = phastOneToAllSearch(facade, {source}, EdgeDuration{10}, 1);
 
     BOOST_CHECK(result.status == IsochroneSearchStatus::SearchNodeLimitReached);
     BOOST_CHECK(result.nodes.empty());
     BOOST_CHECK(result.competitors.empty());
-    BOOST_CHECK_EQUAL(facade.GetIsochroneTopologicalOrderBuildCount(), 0);
+}
+
+BOOST_AUTO_TEST_CASE(counts_over_duration_competitors)
+{
+    const SyntheticCHFacade facade{3,
+                                   {{0, 1, EdgeWeight{1}, EdgeDuration{10}, true, false},
+                                    {1, 2, EdgeWeight{1}, EdgeDuration{10}, true, false}}};
+    const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    const auto limited = phastOneToAllSearch(facade, {source}, EdgeDuration{0}, 1);
+    BOOST_CHECK(limited.status == IsochroneSearchStatus::SearchNodeLimitReached);
+
+    const auto complete = phastOneToAllSearch(facade, {source}, EdgeDuration{0}, 2);
+    BOOST_REQUIRE(complete.isComplete());
+    BOOST_CHECK(complete.nodes.empty());
+    BOOST_CHECK_EQUAL(complete.competitors.size(), 2);
+}
+
+BOOST_AUTO_TEST_CASE(does_not_count_duplicate_paths_or_label_improvements_twice)
+{
+    const SyntheticCHFacade facade{4,
+                                   {{0, 1, EdgeWeight{1}, EdgeDuration{1}, true, false},
+                                    {0, 1, EdgeWeight{2}, EdgeDuration{1}, true, false},
+                                    {0, 2, EdgeWeight{2}, EdgeDuration{6}, true, false},
+                                    {1, 3, EdgeWeight{10}, EdgeDuration{1}, true, false},
+                                    {2, 3, EdgeWeight{2}, EdgeDuration{6}, true, false}}};
+    const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    const auto result = phastOneToAllSearch(facade, {source, source}, EdgeDuration{12}, 3);
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 3);
+    const auto *target = findNode(result, 3);
+    BOOST_REQUIRE(target != nullptr);
+    BOOST_CHECK_EQUAL(target->weight, EdgeWeight{4});
+    BOOST_CHECK_EQUAL(target->duration, EdgeDuration{12});
+}
+
+BOOST_AUTO_TEST_CASE(does_not_count_known_upward_labels_again_when_entering_the_core)
+{
+    const SyntheticCHFacade facade{3,
+                                   {{0, 1, EdgeWeight{5}, EdgeDuration{5}, true, false},
+                                    {0, 2, EdgeWeight{10}, EdgeDuration{10}, true, false},
+                                    {1, 2, EdgeWeight{1}, EdgeDuration{1}, false, true},
+                                    {2, 1, EdgeWeight{1}, EdgeDuration{1}, false, true}}};
+    const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    const auto result = phastOneToAllSearch(facade, {source}, EdgeDuration{10}, 2);
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 2);
+    const auto *target = findNode(result, 2);
+    BOOST_REQUIRE(target != nullptr);
+    BOOST_CHECK_EQUAL(target->weight, EdgeWeight{6});
+    BOOST_CHECK_EQUAL(target->duration, EdgeDuration{6});
+}
+
+BOOST_AUTO_TEST_CASE(counts_core_and_downward_discoveries)
+{
+    const SyntheticCHFacade facade{3,
+                                   {{0, 1, EdgeWeight{5}, EdgeDuration{5}, false, true},
+                                    {1, 2, EdgeWeight{1}, EdgeDuration{1}, false, true},
+                                    {2, 1, EdgeWeight{1}, EdgeDuration{1}, false, true}}};
+    const auto source = makeSource(1, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    for (const auto limit : {1u, 2u})
+    {
+        const auto result = phastOneToAllSearch(facade, {source}, EdgeDuration{10}, limit);
+        BOOST_CHECK(result.status == IsochroneSearchStatus::SearchNodeLimitReached);
+        BOOST_CHECK(result.nodes.empty());
+        BOOST_CHECK(result.competitors.empty());
+    }
+
+    const auto complete = phastOneToAllSearch(facade, {source}, EdgeDuration{10}, 3);
+    BOOST_REQUIRE(complete.isComplete());
+    BOOST_CHECK_EQUAL(complete.nodes.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(inbound_counts_core_and_downward_discoveries)
+{
+    const SyntheticCHFacade facade{3,
+                                   {{0, 1, EdgeWeight{5}, EdgeDuration{5}, true, false},
+                                    {1, 2, EdgeWeight{1}, EdgeDuration{1}, true, false},
+                                    {2, 1, EdgeWeight{1}, EdgeDuration{1}, true, false}}};
+    const auto target = makeTarget(1, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    for (const auto limit : {1u, 2u})
+    {
+        const auto result = phastOneToAllSearch<false>(facade, {target}, EdgeDuration{10}, limit);
+        BOOST_CHECK(result.status == IsochroneSearchStatus::SearchNodeLimitReached);
+        BOOST_CHECK(result.nodes.empty());
+        BOOST_CHECK(result.competitors.empty());
+    }
+
+    const auto complete = phastOneToAllSearch<false>(facade, {target}, EdgeDuration{10}, 3);
+    BOOST_REQUIRE(complete.isComplete());
+    BOOST_CHECK_EQUAL(complete.nodes.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(counts_phantom_reentry_but_not_the_virtual_source)
+{
+    const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+    const SyntheticCHFacade isolated{1, {}};
+    const auto empty = phastOneToAllSearch(isolated, {source}, EdgeDuration{10}, 0);
+    BOOST_REQUIRE(empty.isComplete());
+    BOOST_CHECK(empty.nodes.empty());
+    BOOST_CHECK(empty.competitors.empty());
+
+    const SyntheticCHFacade loop{1, {{0, 0, EdgeWeight{1}, EdgeDuration{1}, true, true}}};
+    const auto limited = phastOneToAllSearch(loop, {source}, EdgeDuration{10}, 0);
+    BOOST_CHECK(limited.status == IsochroneSearchStatus::SearchNodeLimitReached);
+
+    const auto complete = phastOneToAllSearch(loop, {source}, EdgeDuration{10}, 1);
+    BOOST_REQUIRE(complete.isComplete());
+    BOOST_REQUIRE_EQUAL(complete.nodes.size(), 1);
+    BOOST_CHECK_EQUAL(complete.nodes.front().node, 0);
+    BOOST_CHECK_EQUAL(complete.nodes.front().weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(complete.nodes.front().duration, EdgeDuration{1});
+}
+
+BOOST_AUTO_TEST_CASE(preserves_ascending_source_order_for_equal_weight_paths)
+{
+    const SyntheticCHFacade facade{3,
+                                   {{0, 2, EdgeWeight{1}, EdgeDuration{10}, true, false},
+                                    {1, 2, EdgeWeight{1}, EdgeDuration{20}, true, false}}};
+    const auto first = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+    const auto second = makeSource(1, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    const auto result = phastOneToAllSearch(facade, {second, first}, EdgeDuration{20}, 1);
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 1);
+    BOOST_CHECK_EQUAL(result.nodes.front().node, 2);
+    BOOST_CHECK_EQUAL(result.nodes.front().weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(result.nodes.front().duration, EdgeDuration{10});
+}
+
+BOOST_AUTO_TEST_CASE(preserves_arithmetic_overflow_status_in_the_core)
+{
+    const SyntheticCHFacade facade{
+        3,
+        {{0, 1, EdgeWeight{1'200'000'000}, EdgeDuration{1}, true, false},
+         {1, 2, EdgeWeight{1'200'000'000}, EdgeDuration{1}, false, true},
+         {2, 1, EdgeWeight{1'200'000'000}, EdgeDuration{1}, false, true}}};
+    const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    const auto result = phastOneToAllSearch(facade, {source}, EdgeDuration{10}, 3);
+
+    BOOST_CHECK(result.status == IsochroneSearchStatus::ArithmeticOverflow);
+    BOOST_CHECK(result.nodes.empty());
+    BOOST_CHECK(result.competitors.empty());
+}
+
+BOOST_AUTO_TEST_CASE(preserves_arithmetic_overflow_status_in_the_downward_sweep)
+{
+    const SyntheticCHFacade facade{
+        3,
+        {{0, 2, EdgeWeight{1'200'000'000}, EdgeDuration{1}, true, false},
+         {1, 2, EdgeWeight{1'200'000'000}, EdgeDuration{1}, false, true}}};
+    const auto source = makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0});
+
+    const auto result = phastOneToAllSearch(facade, {source}, EdgeDuration{10}, 3);
+
+    BOOST_CHECK(result.status == IsochroneSearchStatus::ArithmeticOverflow);
+    BOOST_CHECK(result.nodes.empty());
+    BOOST_CHECK(result.competitors.empty());
+}
+
+BOOST_AUTO_TEST_CASE(rejects_new_labels_before_mutating_heap_or_reachable_state)
+{
+    detail::IsochroneCHSearchBudget budget(0);
+    const detail::IsochroneCHNodeLabel source{EdgeWeight{0}, EdgeDuration{0}, true};
+    detail::IsochroneCHNodeLabel target;
+
+    const auto label_status =
+        detail::relaxLabel(source, EdgeWeight{1}, EdgeDuration{1}, target, budget);
+    BOOST_CHECK(label_status == IsochroneSearchStatus::SearchNodeLimitReached);
+    BOOST_CHECK(!target.reachable);
+    BOOST_CHECK_EQUAL(budget.nodeCount(), 0);
+
+    detail::IsochroneCHQueryHeap heap(2);
+    const auto heap_status =
+        detail::relaxHeapLabel(source, EdgeWeight{1}, EdgeDuration{1}, 1, heap, budget);
+    BOOST_CHECK(heap_status == IsochroneSearchStatus::SearchNodeLimitReached);
+    BOOST_CHECK_EQUAL(heap.Occupancy(), 0);
+    BOOST_CHECK_EQUAL(budget.nodeCount(), 0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

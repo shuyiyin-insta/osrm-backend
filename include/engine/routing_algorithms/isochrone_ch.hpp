@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <tuple>
 #include <vector>
 
@@ -65,6 +66,32 @@ struct IsochroneCHNodeLabel
     bool reachable = false;
 };
 
+using IsochroneCHSourceLabels = std::map<NodeID, IsochroneCHNodeLabel>;
+
+class IsochroneCHSearchBudget
+{
+  public:
+    explicit IsochroneCHSearchBudget(const std::size_t maximum_nodes)
+        : m_maximum_nodes(maximum_nodes)
+    {
+    }
+
+    IsochroneSearchStatus tryAddNode()
+    {
+        if (m_node_count >= m_maximum_nodes)
+            return IsochroneSearchStatus::SearchNodeLimitReached;
+
+        ++m_node_count;
+        return IsochroneSearchStatus::Complete;
+    }
+
+    std::size_t nodeCount() const { return m_node_count; }
+
+  private:
+    std::size_t m_maximum_nodes;
+    std::size_t m_node_count = 0;
+};
+
 template <typename Metric> bool checkedMetric(const std::int64_t value, Metric &result)
 {
     using Value = typename Metric::value_type;
@@ -93,10 +120,11 @@ inline bool isBetterLabel(const std::int64_t candidate_weight,
                           const IsochroneCHQueryHeap::HeapNode &current)
 { return candidate_weight < from_alias<std::int64_t>(current.weight); }
 
-inline bool relaxLabel(const IsochroneCHNodeLabel &from,
-                       const EdgeWeight edge_weight,
-                       const EdgeDuration edge_duration,
-                       IsochroneCHNodeLabel &to)
+inline IsochroneSearchStatus relaxLabel(const IsochroneCHNodeLabel &from,
+                                        const EdgeWeight edge_weight,
+                                        const EdgeDuration edge_duration,
+                                        IsochroneCHNodeLabel &to,
+                                        IsochroneCHSearchBudget &budget)
 {
     BOOST_ASSERT(from.reachable);
     BOOST_ASSERT(edge_weight > EdgeWeight{0});
@@ -105,7 +133,7 @@ inline bool relaxLabel(const IsochroneCHNodeLabel &from,
     const auto candidate_weight =
         from_alias<std::int64_t>(from.weight) + from_alias<std::int64_t>(edge_weight);
     if (!isBetterLabel(candidate_weight, to))
-        return true;
+        return IsochroneSearchStatus::Complete;
 
     EdgeWeight weight;
     EdgeDuration duration;
@@ -113,10 +141,17 @@ inline bool relaxLabel(const IsochroneCHNodeLabel &from,
         !checkedMetric(from_alias<std::int64_t>(from.duration) +
                            from_alias<std::int64_t>(edge_duration),
                        duration))
-        return false;
+        return IsochroneSearchStatus::ArithmeticOverflow;
+
+    if (!to.reachable)
+    {
+        const auto status = budget.tryAddNode();
+        if (status != IsochroneSearchStatus::Complete)
+            return status;
+    }
 
     to = {weight, duration, true};
-    return true;
+    return IsochroneSearchStatus::Complete;
 }
 
 inline void insertOrUpdate(IsochroneCHQueryHeap &heap,
@@ -142,11 +177,12 @@ inline void insertOrUpdate(IsochroneCHQueryHeap &heap,
     }
 }
 
-inline bool relaxHeapLabel(const IsochroneCHNodeLabel &from,
-                           const EdgeWeight edge_weight,
-                           const EdgeDuration edge_duration,
-                           const NodeID to,
-                           IsochroneCHQueryHeap &heap)
+inline IsochroneSearchStatus relaxHeapLabel(const IsochroneCHNodeLabel &from,
+                                            const EdgeWeight edge_weight,
+                                            const EdgeDuration edge_duration,
+                                            const NodeID to,
+                                            IsochroneCHQueryHeap &heap,
+                                            IsochroneCHSearchBudget &budget)
 {
     BOOST_ASSERT(from.reachable);
     BOOST_ASSERT(edge_weight > EdgeWeight{0});
@@ -156,7 +192,7 @@ inline bool relaxHeapLabel(const IsochroneCHNodeLabel &from,
         from_alias<std::int64_t>(from.weight) + from_alias<std::int64_t>(edge_weight);
     const auto current = heap.GetHeapNodeIfWasInserted(to);
     if (current && (current->WasRemoved() || !isBetterLabel(candidate_weight, *current)))
-        return true;
+        return IsochroneSearchStatus::Complete;
 
     EdgeWeight weight;
     EdgeDuration duration;
@@ -164,31 +200,39 @@ inline bool relaxHeapLabel(const IsochroneCHNodeLabel &from,
         !checkedMetric(from_alias<std::int64_t>(from.duration) +
                            from_alias<std::int64_t>(edge_duration),
                        duration))
-        return false;
+        return IsochroneSearchStatus::ArithmeticOverflow;
+
+    if (!current)
+    {
+        const auto status = budget.tryAddNode();
+        if (status != IsochroneSearchStatus::Complete)
+            return status;
+    }
 
     insertOrUpdate(heap, to, weight, duration);
-    return true;
+    return IsochroneSearchStatus::Complete;
 }
 
-inline bool insertSource(std::vector<IsochroneCHNodeLabel> &source_labels,
-                         const NodeID node,
-                         const EdgeWeight weight,
-                         const EdgeDuration duration)
+inline IsochroneSearchStatus insertSource(IsochroneCHSourceLabels &source_labels,
+                                          const NodeID node,
+                                          const EdgeWeight weight,
+                                          const EdgeDuration duration)
 {
     if (!isValidMetric(weight) || !isValidMetric(duration))
-        return false;
+        return IsochroneSearchStatus::ArithmeticOverflow;
 
     auto &current = source_labels[node];
     if (isBetterLabel(from_alias<std::int64_t>(weight), current))
         current = {weight, duration, true};
-    return true;
+    return IsochroneSearchStatus::Complete;
 }
 
 template <bool FORWARD_SEARCH, typename CHFacade>
-bool initializeSources(IsochroneCHQueryHeap &heap,
-                       std::vector<IsochroneCHNodeLabel> &source_labels,
-                       const PhantomNodeCandidates &endpoint_candidates,
-                       const CHFacade &facade)
+IsochroneSearchStatus initializeSources(IsochroneCHQueryHeap &heap,
+                                        IsochroneCHSourceLabels &source_labels,
+                                        const PhantomNodeCandidates &endpoint_candidates,
+                                        const CHFacade &facade,
+                                        IsochroneCHSearchBudget &budget)
 {
     const auto number_of_nodes = facade.GetNumberOfNodes();
     for (const auto &endpoint : endpoint_candidates)
@@ -201,9 +245,12 @@ bool initializeSources(IsochroneCHQueryHeap &heap,
                                                : endpoint.GetForwardWeightAsTarget();
             const auto duration = FORWARD_SEARCH ? endpoint.GetForwardDurationAsSource()
                                                  : endpoint.GetForwardDurationAsTarget();
-            if (endpoint.forward_segment_id.id >= number_of_nodes ||
-                !insertSource(source_labels, endpoint.forward_segment_id.id, weight, duration))
-                return false;
+            if (endpoint.forward_segment_id.id >= number_of_nodes)
+                return IsochroneSearchStatus::ArithmeticOverflow;
+            const auto status =
+                insertSource(source_labels, endpoint.forward_segment_id.id, weight, duration);
+            if (status != IsochroneSearchStatus::Complete)
+                return status;
         }
         const auto reverse_is_valid =
             FORWARD_SEARCH ? endpoint.IsValidReverseSource() : endpoint.IsValidReverseTarget();
@@ -213,40 +260,42 @@ bool initializeSources(IsochroneCHQueryHeap &heap,
                                                : endpoint.GetReverseWeightAsTarget();
             const auto duration = FORWARD_SEARCH ? endpoint.GetReverseDurationAsSource()
                                                  : endpoint.GetReverseDurationAsTarget();
-            if (endpoint.reverse_segment_id.id >= number_of_nodes ||
-                !insertSource(source_labels, endpoint.reverse_segment_id.id, weight, duration))
-                return false;
+            if (endpoint.reverse_segment_id.id >= number_of_nodes)
+                return IsochroneSearchStatus::ArithmeticOverflow;
+            const auto status =
+                insertSource(source_labels, endpoint.reverse_segment_id.id, weight, duration);
+            if (status != IsochroneSearchStatus::Complete)
+                return status;
         }
     }
 
     // A phantom source is a virtual point inside a directed geometry, rather than an ordinary
     // network node.  Do not settle its negative seed in the heap: a loop can return to the same
     // node with a real, positive network label.  Seed the upward CH arcs directly instead.
-    for (const auto source : util::irange<NodeID>(0, number_of_nodes))
+    for (const auto &[source, source_label] : source_labels)
     {
-        const auto &source_label = source_labels[source];
-        if (!source_label.reachable)
-            continue;
-
         for (const auto edge : facade.GetAdjacentEdgeRange(source))
         {
             const auto &data = facade.GetEdgeData(edge);
             if (!(FORWARD_SEARCH ? data.forward : data.backward))
                 continue;
 
-            if (!relaxHeapLabel(source_label,
-                                data.weight,
-                                to_alias<EdgeDuration>(data.duration),
-                                facade.GetTarget(edge),
-                                heap))
-                return false;
+            const auto status = relaxHeapLabel(source_label,
+                                               data.weight,
+                                               to_alias<EdgeDuration>(data.duration),
+                                               facade.GetTarget(edge),
+                                               heap,
+                                               budget);
+            if (status != IsochroneSearchStatus::Complete)
+                return status;
         }
     }
-    return true;
+    return IsochroneSearchStatus::Complete;
 }
 
 template <bool FORWARD_SEARCH, typename CHFacade>
-bool runUpwardSearch(const CHFacade &facade, IsochroneCHQueryHeap &heap)
+IsochroneSearchStatus
+runUpwardSearch(const CHFacade &facade, IsochroneCHQueryHeap &heap, IsochroneCHSearchBudget &budget)
 {
     while (!heap.Empty())
     {
@@ -260,15 +309,17 @@ bool runUpwardSearch(const CHFacade &facade, IsochroneCHQueryHeap &heap)
             if (!(FORWARD_SEARCH ? data.forward : data.backward))
                 continue;
 
-            if (!relaxHeapLabel(current_label,
-                                data.weight,
-                                to_alias<EdgeDuration>(data.duration),
-                                facade.GetTarget(edge),
-                                heap))
-                return false;
+            const auto status = relaxHeapLabel(current_label,
+                                               data.weight,
+                                               to_alias<EdgeDuration>(data.duration),
+                                               facade.GetTarget(edge),
+                                               heap,
+                                               budget);
+            if (status != IsochroneSearchStatus::Complete)
+                return status;
         }
     }
-    return true;
+    return IsochroneSearchStatus::Complete;
 }
 
 inline std::vector<IsochroneCHNodeLabel> collectUpwardLabels(const IsochroneCHQueryHeap &heap,
@@ -283,29 +334,32 @@ inline std::vector<IsochroneCHNodeLabel> collectUpwardLabels(const IsochroneCHQu
     return labels;
 }
 
-inline bool relaxCoreLabel(const IsochroneCHNodeLabel &from,
-                           const EdgeWeight edge_weight,
-                           const EdgeDuration edge_duration,
-                           const NodeID to,
-                           std::vector<IsochroneCHNodeLabel> &labels,
-                           IsochroneCHQueryHeap &heap)
+inline IsochroneSearchStatus relaxCoreLabel(const IsochroneCHNodeLabel &from,
+                                            const EdgeWeight edge_weight,
+                                            const EdgeDuration edge_duration,
+                                            const NodeID to,
+                                            std::vector<IsochroneCHNodeLabel> &labels,
+                                            IsochroneCHQueryHeap &heap,
+                                            IsochroneCHSearchBudget &budget)
 {
     const auto previous_weight = labels[to].weight;
-    if (!relaxLabel(from, edge_weight, edge_duration, labels[to]))
-        return false;
+    const auto status = relaxLabel(from, edge_weight, edge_duration, labels[to], budget);
+    if (status != IsochroneSearchStatus::Complete)
+        return status;
 
     if (labels[to].weight != previous_weight)
         insertOrUpdate(heap, to, labels[to].weight, labels[to].duration);
-    return true;
+    return IsochroneSearchStatus::Complete;
 }
 
 template <bool FORWARD_SEARCH, typename CHFacade>
-bool relaxCoreOutgoingEdges(const CHFacade &facade,
-                            const IsochroneCHTopologicalOrder &order,
-                            const NodeID source,
-                            const IsochroneCHNodeLabel &source_label,
-                            std::vector<IsochroneCHNodeLabel> &labels,
-                            IsochroneCHQueryHeap &heap)
+IsochroneSearchStatus relaxCoreOutgoingEdges(const CHFacade &facade,
+                                             const IsochroneCHTopologicalOrder &order,
+                                             const NodeID source,
+                                             const IsochroneCHNodeLabel &source_label,
+                                             std::vector<IsochroneCHNodeLabel> &labels,
+                                             IsochroneCHQueryHeap &heap,
+                                             IsochroneCHSearchBudget &budget)
 {
     BOOST_ASSERT(order.isCoreNode(source));
 
@@ -313,14 +367,18 @@ bool relaxCoreOutgoingEdges(const CHFacade &facade,
     {
         const auto &data = facade.GetEdgeData(edge);
         const auto target = facade.GetTarget(edge);
-        if ((FORWARD_SEARCH ? data.forward : data.backward) && order.isCoreNode(target) &&
-            !relaxCoreLabel(source_label,
-                            data.weight,
-                            to_alias<EdgeDuration>(data.duration),
-                            target,
-                            labels,
-                            heap))
-            return false;
+        if ((FORWARD_SEARCH ? data.forward : data.backward) && order.isCoreNode(target))
+        {
+            const auto status = relaxCoreLabel(source_label,
+                                               data.weight,
+                                               to_alias<EdgeDuration>(data.duration),
+                                               target,
+                                               labels,
+                                               heap,
+                                               budget);
+            if (status != IsochroneSearchStatus::Complete)
+                return status;
+        }
     }
 
     const auto relax_reverse_edges = [&](const auto &offsets, const auto &edges)
@@ -329,15 +387,17 @@ bool relaxCoreOutgoingEdges(const CHFacade &facade,
         for (auto index = offsets[core_index]; index < offsets[core_index + 1]; ++index)
         {
             const auto &reverse_edge = edges[index];
-            if (!relaxCoreLabel(source_label,
-                                reverse_edge.weight,
-                                reverse_edge.duration,
-                                reverse_edge.source,
-                                labels,
-                                heap))
-                return false;
+            const auto status = relaxCoreLabel(source_label,
+                                               reverse_edge.weight,
+                                               reverse_edge.duration,
+                                               reverse_edge.source,
+                                               labels,
+                                               heap,
+                                               budget);
+            if (status != IsochroneSearchStatus::Complete)
+                return status;
         }
-        return true;
+        return IsochroneSearchStatus::Complete;
     };
 
     if constexpr (FORWARD_SEARCH)
@@ -347,10 +407,11 @@ bool relaxCoreOutgoingEdges(const CHFacade &facade,
 }
 
 template <bool FORWARD_SEARCH, typename CHFacade>
-bool runCoreSearch(const CHFacade &facade,
-                   const IsochroneCHTopologicalOrder &order,
-                   const std::vector<IsochroneCHNodeLabel> &source_labels,
-                   std::vector<IsochroneCHNodeLabel> &labels)
+IsochroneSearchStatus runCoreSearch(const CHFacade &facade,
+                                    const IsochroneCHTopologicalOrder &order,
+                                    const IsochroneCHSourceLabels &source_labels,
+                                    std::vector<IsochroneCHNodeLabel> &labels,
+                                    IsochroneCHSearchBudget &budget)
 {
     IsochroneCHQueryHeap heap(facade.GetNumberOfNodes());
     for (const auto node : util::irange<NodeID>(0, facade.GetNumberOfNodes()))
@@ -361,30 +422,35 @@ bool runCoreSearch(const CHFacade &facade,
 
     // A phantom source is virtual and therefore must not become an output label just by seeding
     // the core search.  Expand it directly; a genuine loop can still later create its label.
-    for (const auto node : util::irange<NodeID>(0, facade.GetNumberOfNodes()))
+    for (const auto &[node, source_label] : source_labels)
     {
-        if (order.isCoreNode(node) && source_labels[node].reachable &&
-            !relaxCoreOutgoingEdges<FORWARD_SEARCH>(
-                facade, order, node, source_labels[node], labels, heap))
-            return false;
+        if (order.isCoreNode(node))
+        {
+            const auto status = relaxCoreOutgoingEdges<FORWARD_SEARCH>(
+                facade, order, node, source_label, labels, heap, budget);
+            if (status != IsochroneSearchStatus::Complete)
+                return status;
+        }
     }
 
     while (!heap.Empty())
     {
         const auto current = heap.DeleteMinGetHeapNode();
         const IsochroneCHNodeLabel current_label{current.weight, current.data.duration, true};
-        if (!relaxCoreOutgoingEdges<FORWARD_SEARCH>(
-                facade, order, current.node, current_label, labels, heap))
-            return false;
+        const auto status = relaxCoreOutgoingEdges<FORWARD_SEARCH>(
+            facade, order, current.node, current_label, labels, heap, budget);
+        if (status != IsochroneSearchStatus::Complete)
+            return status;
     }
-    return true;
+    return IsochroneSearchStatus::Complete;
 }
 
 template <bool FORWARD_SEARCH, typename CHFacade>
-bool runDownwardSweep(const CHFacade &facade,
-                      const IsochroneCHTopologicalOrder &order,
-                      const std::vector<IsochroneCHNodeLabel> &source_labels,
-                      std::vector<IsochroneCHNodeLabel> &labels)
+IsochroneSearchStatus runDownwardSweep(const CHFacade &facade,
+                                       const IsochroneCHTopologicalOrder &order,
+                                       const IsochroneCHSourceLabels &source_labels,
+                                       std::vector<IsochroneCHNodeLabel> &labels,
+                                       IsochroneCHSearchBudget &budget)
 {
     for (auto iterator = order.nodes.rbegin(); iterator != order.nodes.rend(); ++iterator)
     {
@@ -397,25 +463,35 @@ bool runDownwardSweep(const CHFacade &facade,
 
             const auto higher = facade.GetTarget(edge);
             BOOST_ASSERT(higher == lower || order.rank[lower] < order.rank[higher]);
-            if (source_labels[higher].reachable &&
-                !relaxLabel(source_labels[higher],
-                            data.weight,
-                            to_alias<EdgeDuration>(data.duration),
-                            labels[lower]))
-                return false;
-            if (labels[higher].reachable && !relaxLabel(labels[higher],
-                                                        data.weight,
-                                                        to_alias<EdgeDuration>(data.duration),
-                                                        labels[lower]))
-                return false;
+            const auto source = source_labels.find(higher);
+            if (source != source_labels.end())
+            {
+                const auto status = relaxLabel(source->second,
+                                               data.weight,
+                                               to_alias<EdgeDuration>(data.duration),
+                                               labels[lower],
+                                               budget);
+                if (status != IsochroneSearchStatus::Complete)
+                    return status;
+            }
+            if (labels[higher].reachable)
+            {
+                const auto status = relaxLabel(labels[higher],
+                                               data.weight,
+                                               to_alias<EdgeDuration>(data.duration),
+                                               labels[lower],
+                                               budget);
+                if (status != IsochroneSearchStatus::Complete)
+                    return status;
+            }
         }
     }
-    return true;
+    return IsochroneSearchStatus::Complete;
 }
 
 } // namespace detail
 
-// Runs an outbound, duration-bounded PHAST query over a CH graph.  CHFacade needs
+// Runs a weight-optimal one-to-all PHAST query over a CH graph.  CHFacade needs
 // GetIsochroneTopologicalOrder in addition to the graph accessors used below.  Keeping the order
 // with the loaded facade prevents an O(nodes + edges) DAG walk for every request.
 //
@@ -423,6 +499,7 @@ bool runDownwardSweep(const CHFacade &facade,
 // describes the source partial.  Labels are selected by profile weight and retain the duration of
 // that selected CH path.  The cutoff filters final labels only, because a lower-weight label above
 // the duration cutoff can still suppress a higher-weight, shorter-duration candidate downstream.
+// The node budget counts distinct discovered network labels across phases, not loaded map nodes.
 template <bool FORWARD_SEARCH = true, typename CHFacade>
 IsochroneSearchResult phastOneToAllSearch(
     const CHFacade &facade,
@@ -433,12 +510,6 @@ IsochroneSearchResult phastOneToAllSearch(
     IsochroneSearchResult result;
     BOOST_ASSERT(duration_cutoff >= EdgeDuration{0});
 
-    if (facade.GetNumberOfNodes() > maximum_search_nodes)
-    {
-        result.status = IsochroneSearchStatus::SearchNodeLimitReached;
-        return result;
-    }
-
     const auto *order = facade.GetIsochroneTopologicalOrder();
     if (order == nullptr)
     {
@@ -446,25 +517,34 @@ IsochroneSearchResult phastOneToAllSearch(
         return result;
     }
 
-    detail::IsochroneCHQueryHeap heap(facade.GetNumberOfNodes());
-    std::vector<detail::IsochroneCHNodeLabel> source_labels(facade.GetNumberOfNodes());
-    if (!detail::initializeSources<FORWARD_SEARCH>(
-            heap, source_labels, endpoint_candidates, facade) ||
-        !detail::runUpwardSearch<FORWARD_SEARCH>(facade, heap))
+    detail::IsochroneCHSearchBudget budget(maximum_search_nodes);
+    detail::IsochroneCHSourceLabels source_labels;
+    std::vector<detail::IsochroneCHNodeLabel> labels;
     {
-        result.status = IsochroneSearchStatus::ArithmeticOverflow;
-        return result;
+        detail::IsochroneCHQueryHeap heap(facade.GetNumberOfNodes());
+        result.status = detail::initializeSources<FORWARD_SEARCH>(
+            heap, source_labels, endpoint_candidates, facade, budget);
+        if (!result.isComplete())
+            return result;
+
+        result.status = detail::runUpwardSearch<FORWARD_SEARCH>(facade, heap, budget);
+        if (!result.isComplete())
+            return result;
+
+        labels = detail::collectUpwardLabels(heap, facade.GetNumberOfNodes());
     }
 
-    auto labels = detail::collectUpwardLabels(heap, facade.GetNumberOfNodes());
-    if (!detail::runCoreSearch<FORWARD_SEARCH>(facade, *order, source_labels, labels) ||
-        !detail::runDownwardSweep<FORWARD_SEARCH>(facade, *order, source_labels, labels))
-    {
-        result.status = IsochroneSearchStatus::ArithmeticOverflow;
+    result.status =
+        detail::runCoreSearch<FORWARD_SEARCH>(facade, *order, source_labels, labels, budget);
+    if (!result.isComplete())
         return result;
-    }
 
-    result.nodes.reserve(labels.size());
+    result.status =
+        detail::runDownwardSweep<FORWARD_SEARCH>(facade, *order, source_labels, labels, budget);
+    if (!result.isComplete())
+        return result;
+
+    result.nodes.reserve(budget.nodeCount());
     for (const auto node : util::irange<NodeID>(0, facade.GetNumberOfNodes()))
     {
         const auto &label = labels[node];

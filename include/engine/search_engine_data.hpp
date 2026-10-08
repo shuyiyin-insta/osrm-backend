@@ -210,7 +210,7 @@ template <> struct SearchEngineData<routing_algorithms::mld::Algorithm>
                                                   NodeID,
                                                   EdgeWeight,
                                                   ReachabilityMultiLayerDijkstraHeapData,
-                                                  util::TwoLevelStorage<NodeID, int>>;
+                                                  util::UnorderedMapStorage<NodeID, int>>;
     using MapMatchingQueryHeap = util::QueryHeap<NodeID,
                                                  NodeID,
                                                  EdgeWeight,
@@ -242,8 +242,7 @@ template <> struct SearchEngineData<routing_algorithms::mld::Algorithm>
     void InitializeOrClearManyToManyThreadLocalStorage(unsigned number_of_nodes,
                                                        unsigned number_of_boundary_nodes);
 
-    void InitializeOrClearReachabilityThreadLocalStorage(unsigned number_of_nodes,
-                                                         unsigned number_of_boundary_nodes);
+    void InitializeOrClearReachabilityThreadLocalStorage(unsigned number_of_nodes);
 
     void InitializeUnpackingCache(unsigned number_of_nodes, unsigned number_of_edges);
 };
