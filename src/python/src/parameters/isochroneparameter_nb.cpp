@@ -65,9 +65,22 @@ void init_IsochroneParameters(nb::module_ &m)
             nb::arg("exclude") = std::vector<std::string>(),
             nb::arg("snapping") = std::string(),
             nb::arg("generalize") = std::optional<double>(),
-            nb::arg("denoise") = std::optional<double>())
+            nb::arg("denoise") = std::optional<double>(),
+            nb::sig("def __init__(self, contours_seconds: collections.abc.Sequence[float] = [], "
+                    "direction: IsochroneDirection | str = '', polygons: bool = True, "
+                    "coordinates: collections.abc.Sequence[Coordinate | tuple[float, float]] = [], "
+                    "hints: collections.abc.Sequence[str | None] = [], "
+                    "radiuses: collections.abc.Sequence[float | None] = [], "
+                    "bearings: collections.abc.Sequence[Bearing | None] = [], "
+                    "approaches: collections.abc.Sequence[Approach | None] = [], "
+                    "generate_hints: bool = True, exclude: collections.abc.Sequence[str] = [], "
+                    "snapping: SnappingType | str = '', generalize: float | None = None, "
+                    "denoise: float | None = None) -> None"))
         .def_rw("contours_seconds", &IsochroneParameters::contours_seconds)
-        .def_rw("direction", &IsochroneParameters::direction)
+        .def_rw("direction",
+                &IsochroneParameters::direction,
+                nb::for_setter(
+                    nb::sig("def direction(self, arg: IsochroneDirection | str, /) -> None")))
         .def_rw("polygons", &IsochroneParameters::polygons)
         .def_rw("generalize", &IsochroneParameters::generalize)
         .def_rw("denoise", &IsochroneParameters::denoise)

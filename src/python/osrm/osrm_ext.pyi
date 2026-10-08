@@ -235,16 +235,16 @@ class IsochroneParameters(BaseParameters):
     def __init__(
         self,
         contours_seconds: Sequence[float] = [],
-        direction: IsochroneDirection = "",
+        direction: IsochroneDirection | str = "",
         polygons: bool = True,
-        coordinates: Sequence[Coordinate] = [],
+        coordinates: Sequence[Coordinate | tuple[float, float]] = [],
         hints: Sequence[str | None] = [],
         radiuses: Sequence[float | None] = [],
         bearings: Sequence[Bearing | None] = [],
         approaches: Sequence[Approach | None] = [],
         generate_hints: bool = True,
         exclude: Sequence[str] = [],
-        snapping: SnappingType = "",
+        snapping: SnappingType | str = "",
         generalize: float | None = None,
         denoise: float | None = None,
     ) -> None: ...
@@ -255,7 +255,7 @@ class IsochroneParameters(BaseParameters):
     @property
     def direction(self) -> IsochroneDirection: ...
     @direction.setter
-    def direction(self, arg: IsochroneDirection, /) -> None: ...
+    def direction(self, arg: IsochroneDirection | str, /) -> None: ...
     @property
     def polygons(self) -> bool: ...
     @polygons.setter

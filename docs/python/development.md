@@ -273,6 +273,12 @@ python -m nanobind.stubgen -m osrm.osrm_ext -o src/python/osrm/osrm_ext.pyi
 ruff format src/python/osrm/osrm_ext.pyi
 ```
 
+With `mypy >= 1.16.1` installed, check the isochrone constructor and direction assignment declarations:
+
+```bash
+MYPYPATH=src/python mypy --config-file=test/python/typing/mypy.ini test/python/typing/isochrone.py
+```
+
 ## Releasing
 
 Releases are driven by the monthly release workflow

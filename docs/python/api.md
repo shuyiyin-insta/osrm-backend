@@ -149,6 +149,8 @@ result = engine.Isochrone(params)
 ### IsochroneParameters
 
 Inherits all [BaseParameters](#baseparameters). Exactly one coordinate is required.
+Coordinates accept `(longitude, latitude)` tuples or `Coordinate` objects. Direction strings can
+also be assigned to `params.direction` after construction.
 
 - **`contours_seconds`** `list[float]` - Positive elapsed-duration thresholds in seconds.
 - **`direction`** `str` - `"outbound"` or `"inbound"`. Default: `"outbound"`.

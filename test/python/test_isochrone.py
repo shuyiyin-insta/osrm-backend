@@ -70,6 +70,26 @@ class TestIsochrone:
             for feature in result["features"]
         )
 
+    def test_documented_constructor_and_direction_assignment(self):
+        params = osrm.IsochroneParameters(
+            coordinates=[(7.41337, 43.72956)],
+            contours_seconds=[300.0, 600.0],
+            direction="outbound",
+        )
+        assert params.IsValid()
+
+        params.direction = "inbound"
+        assert params.IsValid()
+        assert repr(params.direction) == "inbound"
+
+        enum_params = osrm.IsochroneParameters(
+            coordinates=[osrm.Coordinate((7.41337, 43.72956))],
+            contours_seconds=[300.0],
+            direction=params.direction,
+        )
+        assert enum_params.IsValid()
+        assert repr(enum_params.direction) == "inbound"
+
     def test_reports_the_decisecond_duration_contour_that_was_evaluated(self):
         params = osrm.IsochroneParameters(
             coordinates=[one_test_coordinate],
