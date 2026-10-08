@@ -65,15 +65,13 @@ struct IsochroneCHNodeLabel
     bool reachable = false;
 };
 
-template <typename Metric> bool checkedAdd(const Metric lhs, const Metric rhs, Metric &result)
+template <typename Metric> bool checkedMetric(const std::int64_t value, Metric &result)
 {
     using Value = typename Metric::value_type;
-    const auto sum = static_cast<std::int64_t>(from_alias<Value>(lhs)) +
-                     static_cast<std::int64_t>(from_alias<Value>(rhs));
-    if (sum < std::numeric_limits<Value>::min() || sum >= std::numeric_limits<Value>::max())
+    if (value < std::numeric_limits<Value>::min() || value >= std::numeric_limits<Value>::max())
         return false;
 
-    result = Metric{static_cast<Value>(sum)};
+    result = Metric{static_cast<Value>(value)};
     return true;
 }
 
@@ -83,24 +81,17 @@ template <typename Metric> bool isValidMetric(const Metric metric)
     return from_alias<Value>(metric) < std::numeric_limits<Value>::max();
 }
 
-inline bool isBetterLabel(const EdgeWeight candidate_weight,
-                          const EdgeDuration candidate_duration,
-                          const IsochroneCHNodeLabel &current)
+inline bool isBetterLabel(const std::int64_t candidate_weight, const IsochroneCHNodeLabel &current)
 {
     // CH preprocessing chooses paths by profile weight.  Its shortcuts can have discarded a
     // different equal-weight path with a shorter duration, so duration is carried metadata, not
     // a secondary shortest-path criterion.
-    static_cast<void>(candidate_duration);
-    return !current.reachable || candidate_weight < current.weight;
+    return !current.reachable || candidate_weight < from_alias<std::int64_t>(current.weight);
 }
 
-inline bool isBetterLabel(const EdgeWeight candidate_weight,
-                          const EdgeDuration candidate_duration,
+inline bool isBetterLabel(const std::int64_t candidate_weight,
                           const IsochroneCHQueryHeap::HeapNode &current)
-{
-    static_cast<void>(candidate_duration);
-    return candidate_weight < current.weight;
-}
+{ return candidate_weight < from_alias<std::int64_t>(current.weight); }
 
 inline bool relaxLabel(const IsochroneCHNodeLabel &from,
                        const EdgeWeight edge_weight,
@@ -111,14 +102,20 @@ inline bool relaxLabel(const IsochroneCHNodeLabel &from,
     BOOST_ASSERT(edge_weight > EdgeWeight{0});
     BOOST_ASSERT(edge_duration >= EdgeDuration{0});
 
+    const auto candidate_weight =
+        from_alias<std::int64_t>(from.weight) + from_alias<std::int64_t>(edge_weight);
+    if (!isBetterLabel(candidate_weight, to))
+        return true;
+
     EdgeWeight weight;
     EdgeDuration duration;
-    if (!checkedAdd(from.weight, edge_weight, weight) ||
-        !checkedAdd(from.duration, edge_duration, duration))
+    if (!checkedMetric(candidate_weight, weight) ||
+        !checkedMetric(from_alias<std::int64_t>(from.duration) +
+                           from_alias<std::int64_t>(edge_duration),
+                       duration))
         return false;
 
-    if (isBetterLabel(weight, duration, to))
-        to = {weight, duration, true};
+    to = {weight, duration, true};
     return true;
 }
 
@@ -134,7 +131,7 @@ inline void insertOrUpdate(IsochroneCHQueryHeap &heap,
         return;
     }
 
-    if (current->WasRemoved() || !isBetterLabel(weight, duration, *current))
+    if (current->WasRemoved() || !isBetterLabel(from_alias<std::int64_t>(weight), *current))
         return;
 
     current->data.duration = duration;
@@ -143,6 +140,34 @@ inline void insertOrUpdate(IsochroneCHQueryHeap &heap,
         current->weight = weight;
         heap.DecreaseKey(*current);
     }
+}
+
+inline bool relaxHeapLabel(const IsochroneCHNodeLabel &from,
+                           const EdgeWeight edge_weight,
+                           const EdgeDuration edge_duration,
+                           const NodeID to,
+                           IsochroneCHQueryHeap &heap)
+{
+    BOOST_ASSERT(from.reachable);
+    BOOST_ASSERT(edge_weight > EdgeWeight{0});
+    BOOST_ASSERT(edge_duration >= EdgeDuration{0});
+
+    const auto candidate_weight =
+        from_alias<std::int64_t>(from.weight) + from_alias<std::int64_t>(edge_weight);
+    const auto current = heap.GetHeapNodeIfWasInserted(to);
+    if (current && (current->WasRemoved() || !isBetterLabel(candidate_weight, *current)))
+        return true;
+
+    EdgeWeight weight;
+    EdgeDuration duration;
+    if (!checkedMetric(candidate_weight, weight) ||
+        !checkedMetric(from_alias<std::int64_t>(from.duration) +
+                           from_alias<std::int64_t>(edge_duration),
+                       duration))
+        return false;
+
+    insertOrUpdate(heap, to, weight, duration);
+    return true;
 }
 
 inline bool insertSource(std::vector<IsochroneCHNodeLabel> &source_labels,
@@ -154,7 +179,7 @@ inline bool insertSource(std::vector<IsochroneCHNodeLabel> &source_labels,
         return false;
 
     auto &current = source_labels[node];
-    if (isBetterLabel(weight, duration, current))
+    if (isBetterLabel(from_alias<std::int64_t>(weight), current))
         current = {weight, duration, true};
     return true;
 }
@@ -209,16 +234,12 @@ bool initializeSources(IsochroneCHQueryHeap &heap,
             if (!(FORWARD_SEARCH ? data.forward : data.backward))
                 continue;
 
-            BOOST_ASSERT(data.weight > EdgeWeight{0});
-            BOOST_ASSERT(to_alias<EdgeDuration>(data.duration) >= EdgeDuration{0});
-
-            EdgeWeight weight;
-            EdgeDuration duration;
-            if (!checkedAdd(source_label.weight, data.weight, weight) ||
-                !checkedAdd(source_label.duration, to_alias<EdgeDuration>(data.duration), duration))
+            if (!relaxHeapLabel(source_label,
+                                data.weight,
+                                to_alias<EdgeDuration>(data.duration),
+                                facade.GetTarget(edge),
+                                heap))
                 return false;
-
-            insertOrUpdate(heap, facade.GetTarget(edge), weight, duration);
         }
     }
     return true;
@@ -232,22 +253,19 @@ bool runUpwardSearch(const CHFacade &facade, IsochroneCHQueryHeap &heap)
         // Insertions can reallocate the heap's backing storage, so retain the settled label by
         // value rather than holding the reference returned by DeleteMinGetHeapNode.
         const auto current = heap.DeleteMinGetHeapNode();
+        const IsochroneCHNodeLabel current_label{current.weight, current.data.duration, true};
         for (const auto edge : facade.GetAdjacentEdgeRange(current.node))
         {
             const auto &data = facade.GetEdgeData(edge);
             if (!(FORWARD_SEARCH ? data.forward : data.backward))
                 continue;
 
-            BOOST_ASSERT(data.weight > EdgeWeight{0});
-            BOOST_ASSERT(to_alias<EdgeDuration>(data.duration) >= EdgeDuration{0});
-
-            EdgeWeight weight;
-            EdgeDuration duration;
-            if (!checkedAdd(current.weight, data.weight, weight) ||
-                !checkedAdd(current.data.duration, to_alias<EdgeDuration>(data.duration), duration))
+            if (!relaxHeapLabel(current_label,
+                                data.weight,
+                                to_alias<EdgeDuration>(data.duration),
+                                facade.GetTarget(edge),
+                                heap))
                 return false;
-
-            insertOrUpdate(heap, facade.GetTarget(edge), weight, duration);
         }
     }
     return true;
@@ -272,21 +290,12 @@ inline bool relaxCoreLabel(const IsochroneCHNodeLabel &from,
                            std::vector<IsochroneCHNodeLabel> &labels,
                            IsochroneCHQueryHeap &heap)
 {
-    BOOST_ASSERT(from.reachable);
-    BOOST_ASSERT(edge_weight > EdgeWeight{0});
-    BOOST_ASSERT(edge_duration >= EdgeDuration{0});
-
-    EdgeWeight weight;
-    EdgeDuration duration;
-    if (!checkedAdd(from.weight, edge_weight, weight) ||
-        !checkedAdd(from.duration, edge_duration, duration))
+    const auto previous_weight = labels[to].weight;
+    if (!relaxLabel(from, edge_weight, edge_duration, labels[to]))
         return false;
 
-    if (isBetterLabel(weight, duration, labels[to]))
-    {
-        labels[to] = {weight, duration, true};
-        insertOrUpdate(heap, to, weight, duration);
-    }
+    if (labels[to].weight != previous_weight)
+        insertOrUpdate(heap, to, labels[to].weight, labels[to].duration);
     return true;
 }
 

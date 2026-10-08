@@ -48,14 +48,12 @@ struct ReachabilitySearchResult
 namespace mld
 {
 
-template <typename Metric> bool checkedAdd(const Metric lhs, const Metric rhs, Metric &result)
+template <typename Metric> bool checkedMetric(const std::int64_t value, Metric &result)
 {
     using Value = typename Metric::value_type;
-    const auto sum = static_cast<std::int64_t>(from_alias<Value>(lhs)) +
-                     static_cast<std::int64_t>(from_alias<Value>(rhs));
-    if (sum < std::numeric_limits<Value>::min() || sum >= std::numeric_limits<Value>::max())
+    if (value < std::numeric_limits<Value>::min() || value >= std::numeric_limits<Value>::max())
         return false;
-    result = Metric{static_cast<Value>(sum)};
+    result = Metric{static_cast<Value>(value)};
     return true;
 }
 
@@ -75,19 +73,26 @@ bool relaxReachabilityEdges(const FacadeT &facade, Heap &heap, const HeapNodeT &
 
         const auto &edge_data = facade.GetEdgeData(edge);
         const auto metric_node = DIRECTION == FORWARD_DIRECTION ? heap_node.node : target;
+        const auto edge_weight =
+            from_alias<std::int64_t>(facade.GetNodeWeight(metric_node)) +
+            from_alias<std::int64_t>(facade.GetWeightPenaltyForEdgeID(edge_data.turn_id));
+        BOOST_ASSERT(edge_weight >= 0);
+        const auto candidate_weight = from_alias<std::int64_t>(heap_node.weight) + edge_weight;
+        const auto current = heap.GetHeapNodeIfWasInserted(target);
+        if (current && (current->WasRemoved() ||
+                        candidate_weight >= from_alias<std::int64_t>(current->weight)))
+            continue;
+
         EdgeWeight weight;
-        if (!checkedAdd(heap_node.weight, facade.GetNodeWeight(metric_node), weight) ||
-            !checkedAdd(weight,
-                        alias_cast<EdgeWeight>(facade.GetWeightPenaltyForEdgeID(edge_data.turn_id)),
-                        weight))
+        if (!checkedMetric(candidate_weight, weight))
             return false;
 
+        const auto candidate_duration =
+            from_alias<std::int64_t>(heap_node.data.duration) +
+            from_alias<std::int64_t>(facade.GetNodeDuration(metric_node)) +
+            from_alias<std::int64_t>(facade.GetDurationPenaltyForEdgeID(edge_data.turn_id));
         EdgeDuration duration;
-        if (!checkedAdd(heap_node.data.duration, facade.GetNodeDuration(metric_node), duration) ||
-            !checkedAdd(
-                duration,
-                alias_cast<EdgeDuration>(facade.GetDurationPenaltyForEdgeID(edge_data.turn_id)),
-                duration))
+        if (!checkedMetric(candidate_duration, duration))
             return false;
 
         insertOrUpdate(heap, target, weight, {heap_node.node, false, duration});
