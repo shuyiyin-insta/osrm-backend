@@ -5,6 +5,7 @@
 #include "util/typedefs.hpp"
 
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <span>
 #include <vector>
@@ -21,6 +22,9 @@ struct WeightedPolylinePoint
     // reconciled by (weight, duration) before distinct geometries are unioned into the grid.
     // No value gives a polyline its own independent coverage group.
     std::optional<PackedGeometryID> geometry_id = std::nullopt;
+    // Index plus fraction in the packed geometry's forward coordinate order. This identifies
+    // road occurrences independently of spatial overlap and is required when geometry_id is set.
+    std::optional<double> geometry_position = std::nullopt;
 };
 
 using WeightedPolyline = std::vector<WeightedPolylinePoint>;
@@ -40,9 +44,11 @@ struct WeightedGridOptions
     // 1e-6-degree output precision.
     double cell_size = 100.;
     std::size_t maximum_cell_count = 1'000'000;
-    // Bounds work for line rasterization independently from grid allocation.
+    // Bounds interval reconciliation and line rasterization independently from grid allocation.
     // A sparse set of long polylines can cross the same bounded grid many times.
     std::size_t maximum_rasterization_steps = 1'000'000;
+    // Select profile-weight winners before clipping to this elapsed duration and allocating cells.
+    double maximum_duration = std::numeric_limits<double>::infinity();
 };
 
 struct WeightedGrid
@@ -98,8 +104,8 @@ struct RasterizationResult
 };
 
 // Rasterizes each finite point and each segment between adjacent finite points. Alternatives for
-// one physical geometry are first selected lexicographically by profile weight and duration; a
-// cell then stores the lowest selected duration across distinct geometries. Returns a typed error
+// one physical geometry are first selected lexicographically by profile weight and duration at
+// each geometry_position; a cell then stores the lowest selected duration. Returns a typed error
 // rather than silently reducing resolution
 // when the fixed-size grid cannot represent the request. Cell sizes below OSRM
 // coordinate precision, non-finite sizes, and nonpositive resource limits

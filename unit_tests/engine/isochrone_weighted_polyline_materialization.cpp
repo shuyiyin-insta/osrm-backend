@@ -138,6 +138,11 @@ BOOST_AUTO_TEST_CASE(uses_forward_geometry_and_matching_forward_durations)
     BOOST_CHECK_CLOSE(result.polylines.front()[2].duration, 50., 1e-9);
     BOOST_CHECK_CLOSE(longitude(result.polylines.front()[0]), 0., 1e-9);
     BOOST_CHECK_CLOSE(longitude(result.polylines.front()[2]), 2., 1e-9);
+    for (std::size_t index = 0; index < 3; ++index)
+    {
+        BOOST_REQUIRE(result.polylines.front()[index].geometry_position);
+        BOOST_CHECK_EQUAL(*result.polylines.front()[index].geometry_position, index);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(uses_reverse_geometry_and_matching_reverse_durations)
@@ -156,6 +161,31 @@ BOOST_AUTO_TEST_CASE(uses_reverse_geometry_and_matching_reverse_durations)
     BOOST_CHECK_CLOSE(result.polylines.front()[0].duration, 10., 1e-9);
     BOOST_CHECK_CLOSE(result.polylines.front()[1].duration, 60., 1e-9);
     BOOST_CHECK_CLOSE(result.polylines.front()[2].duration, 130., 1e-9);
+    for (std::size_t index = 0; index < 3; ++index)
+    {
+        BOOST_REQUIRE(result.polylines.front()[index].geometry_position);
+        BOOST_CHECK_EQUAL(*result.polylines.front()[index].geometry_position, 2 - index);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(preserves_distinct_positions_with_identical_coordinates_and_costs)
+{
+    GeometryFacade facade;
+    facade.coordinates[1] = facade.coordinates[0];
+    facade.setForwardDurations(0, 300);
+    facade.forward_weight_storage[0] = static_cast<std::uint64_t>(20) << SEGMENT_WEIGHT_BITS;
+    const std::vector<osrm::engine::isochrone::DirectedLabel> labels = {
+        {0, EdgeDuration{0}, osrm::engine::isochrone::DurationAnchor::FirstCoordinate}};
+
+    const auto result = materialize(facade, labels);
+    BOOST_REQUIRE(result.error == osrm::engine::isochrone::MaterializationError::None);
+    BOOST_REQUIRE_EQUAL(result.polylines.size(), 1);
+    BOOST_REQUIRE_EQUAL(result.polylines.front().size(), 3);
+    BOOST_CHECK(result.polylines.front()[0].coordinate == result.polylines.front()[1].coordinate);
+    BOOST_REQUIRE(result.polylines.front()[0].geometry_position);
+    BOOST_REQUIRE(result.polylines.front()[1].geometry_position);
+    BOOST_CHECK_EQUAL(*result.polylines.front()[0].geometry_position, 0.);
+    BOOST_CHECK_EQUAL(*result.polylines.front()[1].geometry_position, 1.);
 }
 
 BOOST_AUTO_TEST_CASE(honors_anchor_endpoint_and_fractional_clips)
