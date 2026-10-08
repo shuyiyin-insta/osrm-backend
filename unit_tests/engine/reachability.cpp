@@ -104,6 +104,8 @@ class ReachabilityFacade final
 
     TurnPenalty GetWeightPenaltyForEdgeID(NodeID turn_id) const
     {
+        if (m_reverse_search_graph)
+            return TurnPenalty{0};
         constexpr std::array<TurnPenalty, 7> penalties = {
             {{0}, {-199}, {-100}, {0}, {0}, {0}, {0}}};
         return penalties[turn_id];
@@ -124,6 +126,49 @@ class ReachabilityFacade final
     bool m_overflow_duration;
 };
 
+class ArithmeticReachabilityFacade final
+{
+  public:
+    std::array<EdgeWeight, 4> NodeWeights = {{{1}, {1}, {1}, {1}}};
+    std::array<EdgeDuration, 4> NodeDurations = {{{1}, {1}, {1}, {1}}};
+    std::array<TurnPenalty, 4> WeightPenalties = {{{0}, {0}, {0}, {0}}};
+    std::array<TurnPenalty, 4> DurationPenalties = {{{0}, {0}, {0}, {0}}};
+
+    unsigned GetNumberOfNodes() const { return 4; }
+    unsigned GetMaxBorderNodeID() const { return 0; }
+
+    auto GetBorderEdgeRange(LevelID level, NodeID node) const
+    {
+        BOOST_ASSERT(level == 0);
+        constexpr std::array<std::pair<EdgeID, EdgeID>, 4> ranges = {
+            {{0, 2}, {2, 3}, {3, 4}, {4, 4}}};
+        return util::irange<EdgeID>(ranges[node].first, ranges[node].second);
+    }
+
+    bool IsForwardEdge(EdgeID) const { return true; }
+    bool IsBackwardEdge(EdgeID) const { return false; }
+    bool ExcludeNode(NodeID) const { return false; }
+
+    NodeID GetTarget(EdgeID edge) const
+    {
+        constexpr std::array<NodeID, 4> targets = {{1, 3, 2, 3}};
+        return targets[edge];
+    }
+
+    const customizer::EdgeBasedGraphEdgeData &GetEdgeData(EdgeID edge) const
+    {
+        static const std::array<customizer::EdgeBasedGraphEdgeData, 4> edges = {
+            {{0}, {1}, {2}, {3}}};
+        return edges[edge];
+    }
+
+    EdgeWeight GetNodeWeight(NodeID node) const { return NodeWeights[node]; }
+    EdgeDuration GetNodeDuration(NodeID node) const { return NodeDurations[node]; }
+    TurnPenalty GetWeightPenaltyForEdgeID(NodeID turn_id) const { return WeightPenalties[turn_id]; }
+    TurnPenalty GetDurationPenaltyForEdgeID(NodeID turn_id) const
+    { return DurationPenalties[turn_id]; }
+};
+
 PhantomNode makeSource()
 {
     struct Seed
@@ -139,6 +184,16 @@ PhantomNode makeSource()
                        {6},    {0},        true, false,
                        false,  false,      {},   {},
                        0};
+}
+
+PhantomNode makeZeroOffsetSource()
+{
+    auto source = makeSource();
+    source.forward_weight = EdgeWeight{0};
+    source.forward_weight_offset = EdgeWeight{0};
+    source.forward_duration = EdgeDuration{0};
+    source.forward_duration_offset = EdgeDuration{0};
+    return source;
 }
 
 PhantomNode makeTarget()
@@ -268,6 +323,95 @@ BOOST_AUTO_TEST_CASE(reports_duration_arithmetic_overflow)
     const ReachabilityFacade facade{false, false, true};
 
     const auto result = reachabilitySearch(heaps, facade, {makeSource()}, EdgeDuration{100});
+
+    BOOST_CHECK(result.status == ReachabilitySearchStatus::ArithmeticOverflow);
+}
+
+BOOST_AUTO_TEST_CASE(ignores_dominated_weight_overflow)
+{
+    SearchEngineData<Algorithm> heaps;
+    ArithmeticReachabilityFacade facade;
+    facade.NodeWeights = {{{1}, {1'200'000'000}, {1'200'000'000}, {1}}};
+
+    const auto result =
+        reachabilitySearch(heaps, facade, {makeZeroOffsetSource()}, EdgeDuration{3});
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 3);
+    const auto target = std::find_if(
+        result.nodes.begin(), result.nodes.end(), [](const auto &node) { return node.node == 3; });
+    BOOST_REQUIRE(target != result.nodes.end());
+    BOOST_CHECK_EQUAL(target->weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(target->duration, EdgeDuration{1});
+}
+
+BOOST_AUTO_TEST_CASE(ignores_dominated_duration_overflow)
+{
+    SearchEngineData<Algorithm> heaps;
+    ArithmeticReachabilityFacade facade;
+    facade.NodeDurations = {{{1}, {1'200'000'000}, {1'200'000'000}, {1}}};
+
+    const auto result =
+        reachabilitySearch(heaps, facade, {makeZeroOffsetSource()}, EdgeDuration{3});
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 2);
+    BOOST_REQUIRE_EQUAL(result.competitors.size(), 1);
+    const auto target = std::find_if(
+        result.nodes.begin(), result.nodes.end(), [](const auto &node) { return node.node == 3; });
+    BOOST_REQUIRE(target != result.nodes.end());
+    BOOST_CHECK_EQUAL(target->weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(target->duration, EdgeDuration{1});
+}
+
+BOOST_AUTO_TEST_CASE(negative_turn_penalties_keep_final_metric_sums_representable)
+{
+    SearchEngineData<Algorithm> heaps;
+    ArithmeticReachabilityFacade facade;
+    constexpr auto maximum_metric = std::numeric_limits<EdgeWeight::value_type>::max();
+    facade.NodeWeights[0] = EdgeWeight{maximum_metric - 50};
+    facade.NodeWeights[1] = EdgeWeight{100};
+    facade.NodeDurations[0] = EdgeDuration{maximum_metric - 50};
+    facade.NodeDurations[1] = EdgeDuration{100};
+    facade.WeightPenalties[2] = TurnPenalty{-75};
+    facade.DurationPenalties[2] = TurnPenalty{-75};
+
+    const auto result = reachabilitySearch(
+        heaps, facade, {makeZeroOffsetSource()}, EdgeDuration{maximum_metric - 1});
+
+    BOOST_REQUIRE(result.isComplete());
+    const auto target = std::find_if(
+        result.nodes.begin(), result.nodes.end(), [](const auto &node) { return node.node == 2; });
+    BOOST_REQUIRE(target != result.nodes.end());
+    BOOST_CHECK_EQUAL(target->weight, EdgeWeight{maximum_metric - 25});
+    BOOST_CHECK_EQUAL(target->duration, EdgeDuration{maximum_metric - 25});
+}
+
+BOOST_AUTO_TEST_CASE(reports_unrepresentable_weight_labels)
+{
+    SearchEngineData<Algorithm> heaps;
+    ArithmeticReachabilityFacade facade;
+    facade.NodeWeights[0] = EdgeWeight{std::numeric_limits<EdgeWeight::value_type>::max() - 50};
+    facade.NodeWeights[1] = EdgeWeight{100};
+
+    const auto result =
+        reachabilitySearch(heaps, facade, {makeZeroOffsetSource()}, EdgeDuration{3});
+
+    BOOST_CHECK(result.status == ReachabilitySearchStatus::ArithmeticOverflow);
+}
+
+BOOST_AUTO_TEST_CASE(reports_unrepresentable_improving_duration_labels)
+{
+    SearchEngineData<Algorithm> heaps;
+    ArithmeticReachabilityFacade facade;
+    facade.WeightPenalties[1] = TurnPenalty{10};
+
+    // Keep the direct target label above the candidate's weight so an unrepresentable
+    // duration remains an error when that candidate would otherwise improve the label.
+    facade.NodeDurations = {{{1}, {1'200'000'000}, {1'200'000'000}, {1}}};
+
+    const auto result =
+        reachabilitySearch(heaps, facade, {makeZeroOffsetSource()}, EdgeDuration{3});
 
     BOOST_CHECK(result.status == ReachabilitySearchStatus::ArithmeticOverflow);
 }

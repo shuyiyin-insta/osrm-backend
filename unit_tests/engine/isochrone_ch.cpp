@@ -369,6 +369,115 @@ BOOST_AUTO_TEST_CASE(over_cutoff_weight_optimal_labels_still_suppress_faster_pat
     BOOST_CHECK(findNode(result, 3) == nullptr);
 }
 
+BOOST_AUTO_TEST_CASE(ignores_dominated_upward_weight_overflow)
+{
+    const SyntheticCHFacade facade{
+        3,
+        {{0, 1, EdgeWeight{1'200'000'000}, EdgeDuration{10}, true, false},
+         {0, 2, EdgeWeight{1}, EdgeDuration{10}, true, false},
+         {1, 2, EdgeWeight{1'200'000'000}, EdgeDuration{10}, true, false}}};
+
+    const auto result =
+        phastOneToAllSearch(facade, {makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {10});
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 2);
+    const auto *target = findNode(result, 2);
+    BOOST_REQUIRE(target != nullptr);
+    BOOST_CHECK_EQUAL(target->weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(target->duration, EdgeDuration{10});
+}
+
+BOOST_AUTO_TEST_CASE(ignores_dominated_upward_duration_overflow_before_target_settlement)
+{
+    const SyntheticCHFacade facade{
+        7,
+        {{0, 1, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false},
+         {0, 6, EdgeWeight{100}, EdgeDuration{0}, true, false},
+         {1, 2, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false},
+         {2, 3, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false},
+         {3, 4, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false},
+         {4, 5, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false},
+         {5, 6, EdgeWeight{200}, EdgeDuration{400'000'000}, true, false}}};
+
+    const auto result =
+        phastOneToAllSearch(facade, {makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {0});
+
+    BOOST_REQUIRE(result.isComplete());
+    BOOST_REQUIRE_EQUAL(result.nodes.size(), 1);
+    BOOST_CHECK_EQUAL(result.competitors.size(), 5);
+    const auto *target = findNode(result, 6);
+    BOOST_REQUIRE(target != nullptr);
+    BOOST_CHECK_EQUAL(target->weight, EdgeWeight{100});
+    BOOST_CHECK_EQUAL(target->duration, EdgeDuration{0});
+}
+
+BOOST_AUTO_TEST_CASE(ignores_dominated_downward_weight_overflow)
+{
+    const SyntheticCHFacade facade{
+        3,
+        {{0, 1, EdgeWeight{1}, EdgeDuration{10}, true, false},
+         {0, 2, EdgeWeight{1'200'000'000}, EdgeDuration{10}, true, false},
+         {1, 2, EdgeWeight{1'200'000'000}, EdgeDuration{10}, false, true}}};
+
+    const auto result =
+        phastOneToAllSearch(facade, {makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {10});
+
+    BOOST_REQUIRE(result.isComplete());
+    const auto *target = findNode(result, 1);
+    BOOST_REQUIRE(target != nullptr);
+    BOOST_CHECK_EQUAL(target->weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(target->duration, EdgeDuration{10});
+}
+
+BOOST_AUTO_TEST_CASE(ignores_dominated_core_weight_overflow)
+{
+    const SyntheticCHFacade facade{
+        3,
+        {{0, 1, EdgeWeight{1'200'000'000}, EdgeDuration{10}, true, false},
+         {0, 2, EdgeWeight{1}, EdgeDuration{10}, true, false},
+         {1, 2, EdgeWeight{1'200'000'000}, EdgeDuration{10}, false, true},
+         {2, 1, EdgeWeight{1'200'000'000}, EdgeDuration{10}, false, true}}};
+
+    const auto result =
+        phastOneToAllSearch(facade, {makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {10});
+
+    BOOST_REQUIRE(result.isComplete());
+    const auto *target = findNode(result, 2);
+    BOOST_REQUIRE(target != nullptr);
+    BOOST_CHECK_EQUAL(target->weight, EdgeWeight{1});
+    BOOST_CHECK_EQUAL(target->duration, EdgeDuration{10});
+}
+
+BOOST_AUTO_TEST_CASE(reports_unrepresentable_weight_labels)
+{
+    const SyntheticCHFacade facade{
+        3,
+        {{0, 1, EdgeWeight{1'200'000'000}, EdgeDuration{10}, true, false},
+         {1, 2, EdgeWeight{1'200'000'000}, EdgeDuration{10}, true, false}}};
+
+    const auto result =
+        phastOneToAllSearch(facade, {makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {10});
+
+    BOOST_CHECK(result.status == IsochroneSearchStatus::ArithmeticOverflow);
+}
+
+BOOST_AUTO_TEST_CASE(reports_unrepresentable_duration_labels)
+{
+    const SyntheticCHFacade facade{7,
+                                   {{0, 1, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false},
+                                    {1, 2, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false},
+                                    {2, 3, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false},
+                                    {3, 4, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false},
+                                    {4, 5, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false},
+                                    {5, 6, EdgeWeight{1}, EdgeDuration{400'000'000}, true, false}}};
+
+    const auto result =
+        phastOneToAllSearch(facade, {makeSource(0, EdgeWeight{0}, EdgeWeight{0}, {0}, {0})}, {0});
+
+    BOOST_CHECK(result.status == IsochroneSearchStatus::ArithmeticOverflow);
+}
+
 BOOST_AUTO_TEST_CASE(applies_forward_phantom_offsets_to_weight_and_duration_seeds)
 {
     const SyntheticCHFacade facade{2, {{0, 1, EdgeWeight{20}, EdgeDuration{30}, true, false}}};
