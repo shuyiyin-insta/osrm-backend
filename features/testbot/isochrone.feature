@@ -128,6 +128,75 @@ Feature: Isochrone service
         Then the isochrone response should be a GeoJSON FeatureCollection with "1" "MultiPolygon" features
         And the isochrone should contain "b" and not contain "c"
 
+    Scenario: Preserve a reachable road portion when weight-optimal arrivals switch inside a cell
+        Given the profile file
+            """
+            local functions = require('testbot')
+            functions.setup_testbot = functions.setup
+
+            functions.setup = function()
+              local profile = functions.setup_testbot()
+              profile.properties.weight_name = 'steps'
+              profile.properties.weight_precision = 1
+              profile.properties.continue_straight_at_waypoint = false
+              return profile
+            end
+
+            functions.process_way = function(profile, way, result)
+              result.forward_mode = mode.driving
+              result.backward_mode = mode.driving
+              result.duration = tonumber(way:get_value_by_key('duration'))
+              local weight = tonumber(way:get_value_by_key('weight'))
+              if weight then
+                result.weight = weight
+              else
+                result.forward_rate = 30
+                result.backward_rate = 300 / 70
+              end
+              if way:get_value_by_key('oneway') == 'yes' then
+                result.backward_mode = mode.inaccessible
+              end
+            end
+
+            functions.process_turn = function(profile, turn)
+              turn.duration = 0
+              turn.weight = 0
+            end
+
+            return functions
+            """
+        And the node locations
+            | node | lon      | lat       |
+            | a    | 0        | -0.000899 |
+            | b    | 0        | 0         |
+            | c    | 0        | 0.001799  |
+            | d    | 0.002698 | 0.001799  |
+            | 1    | 0.001259 | 0.001799  |
+        And the ways
+            | nodes | duration | weight | oneway |
+            | ab    | 0.1      | 0.1    | yes    |
+            | bc    | 1        | 30     | yes    |
+            | bd    | 100      | 0.1    | yes    |
+            | cd    | 1        |        |        |
+
+        When I request an isochrone from "a" with contours_seconds "10"
+        Then the isochrone response should be a GeoJSON FeatureCollection with "1" "MultiPolygon" features
+        And the isochrone should contain "1" and not contain "d"
+
+    Scenario: Keep a short contour bounded when the compressed road extends far beyond its cutoff
+        Given the node locations
+            | node | lon    | lat    |
+            | a    | 1      | 1      |
+            | b    | 2      | 2      |
+            | 1    | 1.0001 | 1.0001 |
+        And the ways
+            | nodes | highway | oneway |
+            | ab    | primary | yes    |
+
+        When I request an isochrone from "a" with contours_seconds "2"
+        Then the isochrone response should be a GeoJSON FeatureCollection with "1" "MultiPolygon" features
+        And the isochrone should contain "1" and not contain "b"
+
     Scenario: Reject missing, malformed, and out-of-range duration contour requests
         Given the node map
             """

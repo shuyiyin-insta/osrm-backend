@@ -74,8 +74,8 @@ BOOST_AUTO_TEST_CASE(intentionally_merges_unrelated_geometry_that_shares_a_raste
     const auto source = pointAtMetres(0., 0., 0., 0., 0.);
     const auto nearby = pointAtMetres(0., 0., 20., 20., 30.);
     const std::vector<WeightedPolyline> polylines = {
-        {{source.coordinate, source.duration, 100., PackedGeometryID{1}}},
-        {{nearby.coordinate, nearby.duration, 1., PackedGeometryID{2}}}};
+        {{source.coordinate, source.duration, 100., PackedGeometryID{1}, 0.}},
+        {{nearby.coordinate, nearby.duration, 1., PackedGeometryID{2}, 0.}}};
 
     const auto result =
         osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, {}, source.coordinate);
@@ -94,9 +94,10 @@ BOOST_AUTO_TEST_CASE(selects_the_lower_weight_for_opposite_directions_of_one_geo
     const auto east = pointAtMetres(0., 0., 20., 0., 0.);
     constexpr PackedGeometryID shared_geometry = 7;
     const std::vector<WeightedPolyline> polylines = {
-        {{east.coordinate, 20., 1., shared_geometry}, {west.coordinate, 20., 1., shared_geometry}},
-        {{west.coordinate, 1., 100., shared_geometry},
-         {east.coordinate, 1., 100., shared_geometry}}};
+        {{east.coordinate, 20., 1., shared_geometry, 1.},
+         {west.coordinate, 20., 1., shared_geometry, 0.}},
+        {{west.coordinate, 1., 100., shared_geometry, 0.},
+         {east.coordinate, 1., 100., shared_geometry, 1.}}};
 
     const auto result =
         osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, {}, west.coordinate);
@@ -113,10 +114,10 @@ BOOST_AUTO_TEST_CASE(breaks_shared_geometry_weight_ties_by_duration)
     const auto east = pointAtMetres(0., 0., 20., 0., 0.);
     constexpr PackedGeometryID shared_geometry = 9;
     const std::vector<WeightedPolyline> polylines = {
-        {{east.coordinate, 20., 10., shared_geometry},
-         {west.coordinate, 20., 10., shared_geometry}},
-        {{west.coordinate, 10., 10., shared_geometry},
-         {east.coordinate, 10., 10., shared_geometry}}};
+        {{east.coordinate, 20., 10., shared_geometry, 1.},
+         {west.coordinate, 20., 10., shared_geometry, 0.}},
+        {{west.coordinate, 10., 10., shared_geometry, 0.},
+         {east.coordinate, 10., 10., shared_geometry, 1.}}};
 
     const auto result =
         osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, {}, west.coordinate);
@@ -136,13 +137,13 @@ BOOST_AUTO_TEST_CASE(allows_the_shared_geometry_winner_to_change_by_road_locatio
     constexpr PackedGeometryID shared_geometry = 11;
     const std::vector<WeightedPolyline> polylines = {
         // This is the lower-weight direction on the eastern two cells.
-        {{east.coordinate, 30., 50., shared_geometry},
-         {middle.coordinate, 40., 51., shared_geometry},
-         {west.coordinate, 50., 52., shared_geometry}},
+        {{east.coordinate, 30., 50., shared_geometry, 2.},
+         {middle.coordinate, 40., 51., shared_geometry, 1.},
+         {west.coordinate, 50., 52., shared_geometry, 0.}},
         // This direction is lower weight near the western endpoint only.
-        {{west.coordinate, 1., 0., shared_geometry},
-         {middle.coordinate, 2., 100., shared_geometry},
-         {east.coordinate, 3., 200., shared_geometry}}};
+        {{west.coordinate, 1., 0., shared_geometry, 0.},
+         {middle.coordinate, 2., 100., shared_geometry, 1.},
+         {east.coordinate, 3., 200., shared_geometry, 2.}}};
 
     const auto result =
         osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, {}, west.coordinate);
@@ -150,11 +151,201 @@ BOOST_AUTO_TEST_CASE(allows_the_shared_geometry_winner_to_change_by_road_locatio
     BOOST_REQUIRE(result.grid);
     BOOST_REQUIRE_EQUAL(result.grid->width, 3);
     BOOST_REQUIRE_EQUAL(result.grid->height, 1);
-    // A 10 s contour may retain the western cell, where the quick direction wins, but not the
-    // eastern cells, where the slower direction is lexicographically lower weight.
+    // The quick direction wins part of the western cell; the slower direction wins throughout
+    // the remaining cells.
     BOOST_CHECK_LE(result.grid->values[0], 10.);
     BOOST_CHECK_GT(result.grid->values[1], 10.);
     BOOST_CHECK_GT(result.grid->values[2], 10.);
+}
+
+BOOST_AUTO_TEST_CASE(retains_a_reachable_winner_that_changes_inside_one_cell)
+{
+    const auto west = pointAtMetres(0., 0., 10., 10., 0.);
+    const auto east = pointAtMetres(0., 0., 30., 10., 0.);
+    constexpr PackedGeometryID shared_geometry = 12;
+    std::vector<WeightedPolyline> polylines = {
+        {{west.coordinate, 1., 30., shared_geometry, 0.},
+         {east.coordinate, 2., 40., shared_geometry, 1.}},
+        {{east.coordinate, 100., 0., shared_geometry, 1.},
+         {west.coordinate, 101., 100., shared_geometry, 0.}}};
+    const Coordinate center{osrm::util::FloatLongitude{0.}, osrm::util::FloatLatitude{0.}};
+
+    for (unsigned iteration = 0; iteration < 2; ++iteration)
+    {
+        osrm::engine::isochrone::WeightedGridOptions options;
+        options.maximum_duration = 10.;
+        const auto result =
+            osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, options, center);
+        BOOST_REQUIRE(result.grid);
+        BOOST_REQUIRE_EQUAL(result.grid->values.size(), 1);
+        BOOST_CHECK_CLOSE(result.grid->values.front(), 1., 1e-9);
+        BOOST_CHECK_EQUAL(result.grid->buildContours(10.).size(), 1);
+        std::reverse(polylines.begin(), polylines.end());
+    }
+}
+
+BOOST_AUTO_TEST_CASE(clips_selected_road_intervals_before_allocating_the_grid)
+{
+    const auto source = pointAtMetres(0., 0., 0., 0., 0.);
+    const auto corner = pointAtMetres(0., 0., 150'000., 0., 0.);
+    const auto far = pointAtMetres(0., 0., 150'000., 150'000., 0.);
+    const std::vector<WeightedPolyline> polylines = {
+        {{source.coordinate, 0., 0., PackedGeometryID{1}, 0.},
+         {corner.coordinate, 10'000., 10'000., PackedGeometryID{1}, 1.},
+         {far.coordinate, 20'000., 20'000., PackedGeometryID{1}, 2.}}};
+    osrm::engine::isochrone::WeightedGridOptions options;
+    options.maximum_cell_count = 250'000;
+    options.maximum_duration = 1.;
+
+    const auto result =
+        osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, options, source.coordinate);
+    BOOST_REQUIRE(result.grid);
+    BOOST_REQUIRE_EQUAL(result.grid->width, 1);
+    BOOST_REQUIRE_EQUAL(result.grid->height, 1);
+    BOOST_CHECK_EQUAL(result.grid->buildContours(1.).size(), 1);
+}
+
+BOOST_AUTO_TEST_CASE(clips_inbound_duration_suffixes_before_allocating_the_grid)
+{
+    const auto source = pointAtMetres(0., 0., 0., 0., 0.);
+    const auto corner = pointAtMetres(0., 0., 150'000., 0., 0.);
+    const auto target = pointAtMetres(0., 0., 150'000., 150'000., 0.);
+    const std::vector<WeightedPolyline> polylines = {
+        {{source.coordinate, 20'000., 20'000., PackedGeometryID{1}, 0.},
+         {corner.coordinate, 10'000., 10'000., PackedGeometryID{1}, 1.},
+         {target.coordinate, 0., 0., PackedGeometryID{1}, 2.}}};
+    osrm::engine::isochrone::WeightedGridOptions options;
+    options.maximum_cell_count = 250'000;
+    options.maximum_duration = 1.;
+
+    const auto result =
+        osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, options, target.coordinate);
+    BOOST_REQUIRE(result.grid);
+    BOOST_REQUIRE_EQUAL(result.grid->width, 1);
+    BOOST_REQUIRE_EQUAL(result.grid->height, 2);
+    BOOST_CHECK_EQUAL(result.grid->buildContours(1.).size(), 1);
+}
+
+BOOST_AUTO_TEST_CASE(does_not_prune_a_slower_lower_weight_competitor_before_selection)
+{
+    const auto west = pointAtMetres(0., 0., 10., 10., 0.);
+    const auto east = pointAtMetres(0., 0., 30., 10., 0.);
+    const std::vector<WeightedPolyline> polylines = {
+        {{west.coordinate, 1., 30., PackedGeometryID{1}, 0.},
+         {east.coordinate, 2., 40., PackedGeometryID{1}, 1.}},
+        {{west.coordinate, 100., 0., PackedGeometryID{1}, 0.},
+         {east.coordinate, 101., 1., PackedGeometryID{1}, 1.}}};
+    osrm::engine::isochrone::WeightedGridOptions options;
+    options.maximum_duration = 10.;
+
+    const auto result = osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, options);
+    BOOST_REQUIRE(result.grid);
+    BOOST_CHECK(result.grid->values.empty());
+    BOOST_CHECK(result.grid->buildContours(10.).empty());
+}
+
+BOOST_AUTO_TEST_CASE(reconciles_only_the_covered_part_of_a_phantom_competitor)
+{
+    const auto west = pointAtMetres(0., 0., 10., 10., 0.);
+    const auto middle = pointAtMetres(0., 0., 110., 10., 0.);
+    const auto east = pointAtMetres(0., 0., 210., 10., 0.);
+    const std::vector<WeightedPolyline> polylines = {
+        {{west.coordinate, 1., 100., PackedGeometryID{1}, 0.},
+         {east.coordinate, 2., 101., PackedGeometryID{1}, 1.}},
+        {{east.coordinate, 100., 0., PackedGeometryID{1}, 1.},
+         {middle.coordinate, 101., 1., PackedGeometryID{1}, 0.5}}};
+    osrm::engine::isochrone::WeightedGridOptions options;
+    options.maximum_duration = 10.;
+    const Coordinate center{osrm::util::FloatLongitude{0.}, osrm::util::FloatLatitude{0.}};
+
+    const auto result =
+        osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, options, center);
+    BOOST_REQUIRE(result.grid);
+    BOOST_REQUIRE_EQUAL(result.grid->width, 2);
+    BOOST_CHECK_LE(result.grid->values[0], 10.);
+    BOOST_CHECK_LE(result.grid->values[1], 10.);
+}
+
+BOOST_AUTO_TEST_CASE(keeps_self_overlapping_road_occurrences_independent)
+{
+    const auto west = pointAtMetres(0., 0., 10., 10., 0.);
+    const auto east = pointAtMetres(0., 0., 30., 10., 0.);
+    const std::vector<WeightedPolyline> polylines = {
+        {{west.coordinate, 1., 100., PackedGeometryID{1}, 0.},
+         {east.coordinate, 2., 101., PackedGeometryID{1}, 1.}},
+        {{west.coordinate, 100., 0., PackedGeometryID{1}, 2.},
+         {east.coordinate, 101., 1., PackedGeometryID{1}, 3.}}};
+    osrm::engine::isochrone::WeightedGridOptions options;
+    options.maximum_duration = 10.;
+    const Coordinate center{osrm::util::FloatLongitude{0.}, osrm::util::FloatLatitude{0.}};
+
+    const auto result =
+        osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, options, center);
+    BOOST_REQUIRE(result.grid);
+    BOOST_REQUIRE_EQUAL(result.grid->values.size(), 1);
+    BOOST_CHECK_CLOSE(result.grid->values.front(), 1., 1e-9);
+}
+
+BOOST_AUTO_TEST_CASE(preserves_reachable_duplicate_coordinate_occurrences)
+{
+    const auto west = pointAtMetres(0., 0., 10., 10., 0.);
+    const auto east = pointAtMetres(0., 0., 30., 10., 0.);
+    const std::vector<WeightedPolyline> polylines = {
+        {{west.coordinate, 1., 0., PackedGeometryID{1}, 0.},
+         {west.coordinate, 100., 10., PackedGeometryID{1}, 1.},
+         {east.coordinate, 101., 11., PackedGeometryID{1}, 2.}},
+        {{east.coordinate, 100., 0., PackedGeometryID{1}, 2.},
+         {west.coordinate, 101., 1., PackedGeometryID{1}, 1.}}};
+    osrm::engine::isochrone::WeightedGridOptions options;
+    options.maximum_duration = 10.;
+
+    const auto result = osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, options);
+    BOOST_REQUIRE(result.grid);
+    BOOST_REQUIRE_EQUAL(result.grid->values.size(), 1);
+    BOOST_CHECK_CLOSE(result.grid->values.front(), 1., 1e-9);
+}
+
+BOOST_AUTO_TEST_CASE(bounds_the_work_of_reconciling_many_road_alternatives)
+{
+    const auto west = pointAtMetres(0., 0., 10., 10., 0.);
+    const auto east = pointAtMetres(0., 0., 30., 10., 0.);
+    std::vector<WeightedPolyline> polylines;
+    for (unsigned alternative = 0; alternative < 60; ++alternative)
+    {
+        polylines.push_back(
+            {{west.coordinate, 1., static_cast<double>(alternative), PackedGeometryID{1}, 0.},
+             {east.coordinate,
+              2.,
+              static_cast<double>(alternative) + 1.,
+              PackedGeometryID{1},
+              1.}});
+    }
+    osrm::engine::isochrone::WeightedGridOptions options;
+    options.maximum_rasterization_steps = 128;
+
+    const auto bounded = osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, options);
+    BOOST_CHECK(bounded.error == osrm::engine::isochrone::RasterizationError::TooBig);
+    BOOST_CHECK(!bounded.grid);
+    options.maximum_rasterization_steps = 10'000;
+    const auto complete = osrm::engine::isochrone::rasterizeWeightedPolylines(polylines, options);
+    BOOST_CHECK(complete.grid);
+}
+
+BOOST_AUTO_TEST_CASE(rejects_ambiguous_or_invalid_geometry_positions)
+{
+    const auto source = pointAtMetres(0., 0., 0., 0., 0.);
+    const std::vector<std::optional<double>> positions = {std::nullopt,
+                                                          -1.,
+                                                          std::numeric_limits<double>::infinity(),
+                                                          std::numeric_limits<double>::quiet_NaN()};
+    for (const auto position : positions)
+    {
+        const std::vector<WeightedPolyline> polylines = {
+            {{source.coordinate, 0., 0., PackedGeometryID{1}, position}}};
+        const auto result = osrm::engine::isochrone::rasterizeWeightedPolylines(polylines);
+        BOOST_CHECK(result.error == osrm::engine::isochrone::RasterizationError::InvalidOptions);
+        BOOST_CHECK(!result.grid);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(uses_the_same_metre_grid_at_different_latitudes)
@@ -438,6 +629,8 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_rasterization_options_before_doing_grid_ari
     check_invalid({std::numeric_limits<double>::infinity(), 1, 1});
     check_invalid({100., 0, 1});
     check_invalid({100., 1, 0});
+    check_invalid({100., 1, 1, -1.});
+    check_invalid({100., 1, 1, std::numeric_limits<double>::quiet_NaN()});
 }
 
 BOOST_AUTO_TEST_CASE(rejects_a_cell_size_that_cannot_preserve_output_coordinates)

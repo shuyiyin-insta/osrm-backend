@@ -199,24 +199,266 @@ double gridPosition(const double value,
     return std::clamp(position, 0., std::nextafter(static_cast<double>(dimension), 0.));
 }
 
-struct RasterLabel
+struct PolylineSegment
 {
-    double weight = std::numeric_limits<double>::infinity();
-    double duration = std::numeric_limits<double>::infinity();
+    const WeightedPolylinePoint *from;
+    const WeightedPolylinePoint *to;
+
+    double begin() const { return from->geometry_position.value_or(0.); }
+    double end() const { return to->geometry_position.value_or(1.); }
 };
 
-RasterLabel
-labelAt(const WeightedPolylinePoint &from, const WeightedPolylinePoint &to, const double fraction)
+struct PositionInterval
 {
-    return {from.weight + (to.weight - from.weight) * fraction,
-            from.duration + (to.duration - from.duration) * fraction};
+    double begin;
+    double end;
+};
+
+struct SelectedSegment
+{
+    std::size_t segment;
+    PositionInterval interval;
+};
+
+long double fractionAt(const PolylineSegment &segment, const double position)
+{
+    if (segment.begin() == segment.end())
+        return 0.;
+    return std::clamp((static_cast<long double>(position) - segment.begin()) /
+                          (static_cast<long double>(segment.end()) - segment.begin()),
+                      0.L,
+                      1.L);
 }
 
-RasterLabel betterLabel(const RasterLabel left, const RasterLabel right)
+std::pair<long double, long double> labelAt(const PolylineSegment &segment, const double position)
 {
-    return std::tie(left.weight, left.duration) < std::tie(right.weight, right.duration) ? left
-                                                                                         : right;
+    const auto fraction = fractionAt(segment, position);
+    return {segment.from->weight +
+                (static_cast<long double>(segment.to->weight) - segment.from->weight) * fraction,
+            segment.from->duration +
+                (static_cast<long double>(segment.to->duration) - segment.from->duration) *
+                    fraction};
 }
+
+WeightedPolylinePoint pointAt(const PolylineSegment &segment, const double position)
+{
+    const auto fraction = fractionAt(segment, position);
+    if (fraction == 0.)
+        return *segment.from;
+    if (fraction == 1.)
+        return *segment.to;
+
+    const auto [weight, duration] = labelAt(segment, position);
+    return {{util::FloatLongitude{
+                 static_cast<double>(longitude(segment.from->coordinate) +
+                                     (static_cast<long double>(longitude(segment.to->coordinate)) -
+                                      longitude(segment.from->coordinate)) *
+                                         fraction)},
+             util::FloatLatitude{
+                 static_cast<double>(latitude(segment.from->coordinate) +
+                                     (static_cast<long double>(latitude(segment.to->coordinate)) -
+                                      latitude(segment.from->coordinate)) *
+                                         fraction)}},
+            static_cast<double>(duration),
+            static_cast<double>(weight),
+            segment.from->geometry_id,
+            segment.from->geometry_position ? std::optional<double>{position} : std::nullopt};
+}
+
+std::optional<PositionInterval> losingInterval(const PolylineSegment &candidate,
+                                               const PolylineSegment &competitor,
+                                               const PositionInterval overlap,
+                                               const bool competitor_first)
+{
+    const auto candidate_begin = labelAt(candidate, overlap.begin);
+    const auto competitor_begin = labelAt(competitor, overlap.begin);
+    if (overlap.begin == overlap.end)
+    {
+        return competitor_begin < candidate_begin ||
+                       (competitor_begin == candidate_begin && competitor_first)
+                   ? std::optional<PositionInterval>{overlap}
+                   : std::nullopt;
+    }
+
+    const auto candidate_end = labelAt(candidate, overlap.end);
+    const auto competitor_end = labelAt(competitor, overlap.end);
+    auto begin_difference = candidate_begin.first - competitor_begin.first;
+    auto end_difference = candidate_end.first - competitor_end.first;
+    if (begin_difference == 0. && end_difference == 0.)
+    {
+        begin_difference = candidate_begin.second - competitor_begin.second;
+        end_difference = candidate_end.second - competitor_end.second;
+        if (begin_difference == 0. && end_difference == 0.)
+            return competitor_first ? std::optional<PositionInterval>{overlap} : std::nullopt;
+    }
+    if (begin_difference <= 0. && end_difference <= 0.)
+        return std::nullopt;
+    if (begin_difference >= 0. && end_difference >= 0.)
+        return overlap;
+
+    const auto crossing = static_cast<double>(
+        overlap.begin + (static_cast<long double>(overlap.end) - overlap.begin) * begin_difference /
+                            (begin_difference - end_difference));
+    return begin_difference > 0. ? PositionInterval{overlap.begin, crossing}
+                                 : PositionInterval{crossing, overlap.end};
+}
+
+RasterizationError prepareSegments(const std::span<const WeightedPolyline> polylines,
+                                   const WeightedGridOptions &options,
+                                   std::vector<PolylineSegment> &segments,
+                                   std::vector<SelectedSegment> &selected)
+{
+    for (const auto &polyline : polylines)
+    {
+        std::optional<std::optional<PackedGeometryID>> geometry_id;
+        const WeightedPolylinePoint *previous = nullptr;
+        for (const auto &point : polyline)
+        {
+            if (!isUsable(point))
+            {
+                previous = nullptr;
+                continue;
+            }
+            if (!geometry_id)
+                geometry_id = point.geometry_id;
+            else if (*geometry_id != point.geometry_id)
+                return RasterizationError::InvalidOptions;
+            if (point.geometry_id &&
+                (!point.geometry_position || !std::isfinite(*point.geometry_position) ||
+                 *point.geometry_position < 0.))
+                return RasterizationError::InvalidOptions;
+            if (segments.size() >= options.maximum_rasterization_steps)
+                return RasterizationError::TooBig;
+
+            auto from = previous ? previous : &point;
+            auto to = &point;
+            if (point.geometry_id && *from->geometry_position > *to->geometry_position)
+                std::swap(from, to);
+            segments.push_back({from, to});
+            previous = &point;
+        }
+    }
+
+    const auto append = [&](const std::size_t segment_index, PositionInterval interval)
+    {
+        const auto &segment = segments[segment_index];
+        const auto begin_duration = labelAt(segment, interval.begin).second;
+        const auto end_duration = labelAt(segment, interval.end).second;
+        if (begin_duration > options.maximum_duration && end_duration > options.maximum_duration)
+            return true;
+        if (begin_duration > options.maximum_duration || end_duration > options.maximum_duration)
+        {
+            const auto crossing = static_cast<double>(
+                interval.begin + (static_cast<long double>(interval.end) - interval.begin) *
+                                     (options.maximum_duration - begin_duration) /
+                                     (end_duration - begin_duration));
+            if (begin_duration > options.maximum_duration)
+                interval.begin = crossing;
+            else
+                interval.end = crossing;
+        }
+        if (selected.size() >= options.maximum_rasterization_steps)
+            return false;
+        selected.push_back({segment_index, interval});
+        return true;
+    };
+
+    std::vector<std::size_t> order(segments.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(),
+              order.end(),
+              [&](const auto left, const auto right)
+              {
+                  const auto &a = segments[left];
+                  const auto &b = segments[right];
+                  return std::tuple{a.from->geometry_id, a.begin(), a.end(), left} <
+                         std::tuple{b.from->geometry_id, b.begin(), b.end(), right};
+              });
+
+    std::size_t comparisons = 0;
+    std::vector<double> maximum_ends;
+    std::vector<PositionInterval> intervals;
+    std::vector<PositionInterval> remaining;
+    for (std::size_t group_begin = 0; group_begin < order.size();)
+    {
+        const auto geometry_id = segments[order[group_begin]].from->geometry_id;
+        if (!geometry_id)
+        {
+            const auto index = order[group_begin++];
+            if (!append(index, {segments[index].begin(), segments[index].end()}))
+                return RasterizationError::TooBig;
+            continue;
+        }
+        auto group_end = group_begin + 1;
+        while (group_end < order.size() &&
+               segments[order[group_end]].from->geometry_id == geometry_id)
+            ++group_end;
+
+        maximum_ends.clear();
+        auto maximum_end = 0.;
+        for (auto index = group_begin; index < group_end; ++index)
+        {
+            maximum_end = std::max(maximum_end, segments[order[index]].end());
+            maximum_ends.push_back(maximum_end);
+        }
+        for (auto index = group_begin; index < group_end; ++index)
+        {
+            const auto candidate_index = order[index];
+            const auto &candidate = segments[candidate_index];
+            intervals.assign(1, {candidate.begin(), candidate.end()});
+            const auto first =
+                std::lower_bound(maximum_ends.begin(), maximum_ends.end(), candidate.begin());
+            const auto first_index =
+                group_begin + static_cast<std::size_t>(first - maximum_ends.begin());
+            for (auto other = first_index; other < group_end && !intervals.empty(); ++other)
+            {
+                const auto competitor_index = order[other];
+                const auto &competitor = segments[competitor_index];
+                if (competitor.begin() > candidate.end())
+                    break;
+                if (competitor_index == candidate_index)
+                    continue;
+                remaining.clear();
+                for (const auto interval : intervals)
+                {
+                    if (comparisons >= options.maximum_rasterization_steps)
+                        return RasterizationError::TooBig;
+                    ++comparisons;
+                    const PositionInterval overlap{std::max(interval.begin, competitor.begin()),
+                                                   std::min(interval.end, competitor.end())};
+                    const auto losing = overlap.begin <= overlap.end
+                                            ? losingInterval(candidate,
+                                                             competitor,
+                                                             overlap,
+                                                             competitor_index < candidate_index)
+                                            : std::nullopt;
+                    if (!losing)
+                        remaining.push_back(interval);
+                    else
+                    {
+                        if (interval.begin < losing->begin)
+                            remaining.push_back({interval.begin, losing->begin});
+                        if (losing->end < interval.end)
+                            remaining.push_back({losing->end, interval.end});
+                    }
+                }
+                intervals.swap(remaining);
+            }
+            for (const auto interval : intervals)
+            {
+                if (!append(candidate_index, interval))
+                    return RasterizationError::TooBig;
+            }
+        }
+        group_begin = group_end;
+    }
+    return RasterizationError::None;
+}
+
+double durationAt(const WeightedPolylinePoint &from,
+                  const WeightedPolylinePoint &to,
+                  const double fraction)
+{ return from.duration + (to.duration - from.duration) * fraction; }
 
 template <typename UpdateCell>
 bool rasterizeSegment(const WeightedGrid &grid,
@@ -241,7 +483,7 @@ bool rasterizeSegment(const WeightedGrid &grid,
 
     if (dx == 0. && dy == 0.)
     {
-        return update_cell(x, y, betterLabel(labelAt(from, to, 0.), labelAt(from, to, 1.)));
+        return update_cell(x, y, std::min(from.duration, to.duration));
     }
 
     const auto step_x = dx > 0. ? 1 : dx < 0. ? -1 : 0;
@@ -264,8 +506,8 @@ bool rasterizeSegment(const WeightedGrid &grid,
     for (std::size_t step = 0; step <= grid.width + grid.height; ++step)
     {
         const auto next_t = std::min({t_max_x, t_max_y, 1.});
-        const auto next_label = labelAt(from, to, next_t);
-        if (!update_cell(x, y, betterLabel(labelAt(from, to, t), next_label)))
+        const auto next_label = durationAt(from, to, next_t);
+        if (!update_cell(x, y, std::min(durationAt(from, to, t), next_label)))
         {
             return false;
         }
@@ -339,32 +581,6 @@ bool rasterizeSegment(const WeightedGrid &grid,
 
     BOOST_ASSERT(false);
     return false;
-}
-
-struct PolylineGroup
-{
-    std::optional<PackedGeometryID> geometry_id;
-    std::size_t independent_id;
-};
-
-bool sameGroup(const PolylineGroup &left, const PolylineGroup &right)
-{
-    if (left.geometry_id && right.geometry_id)
-        return left.geometry_id == right.geometry_id;
-    return !left.geometry_id && !right.geometry_id && left.independent_id == right.independent_id;
-}
-
-bool lessGroup(const PolylineGroup &left, const PolylineGroup &right)
-{
-    if (left.geometry_id != right.geometry_id)
-    {
-        if (!left.geometry_id)
-            return false;
-        if (!right.geometry_id)
-            return true;
-        return *left.geometry_id < *right.geometry_id;
-    }
-    return !left.geometry_id && left.independent_id < right.independent_id;
 }
 
 util::Coordinate coordinateAt(const WeightedGrid &grid, const GridPoint point)
@@ -481,20 +697,33 @@ rasterizeWeightedPolylines(const std::span<const WeightedPolyline> polylines,
                            const std::optional<util::Coordinate> projection_center)
 {
     if (!std::isfinite(options.cell_size) || options.cell_size < MINIMUM_CELL_SIZE_METRES ||
-        options.maximum_cell_count == 0 || options.maximum_rasterization_steps == 0)
+        options.maximum_cell_count == 0 || options.maximum_rasterization_steps == 0 ||
+        !(options.maximum_duration >= 0.))
     {
         return {{}, RasterizationError::InvalidOptions};
     }
 
+    std::vector<PolylineSegment> segments;
+    std::vector<SelectedSegment> selected;
+    const auto preparation_error = prepareSegments(polylines, options, segments, selected);
+    if (preparation_error != RasterizationError::None)
+        return {{}, preparation_error};
+    const auto endpoints = [&](const SelectedSegment &segment)
+    {
+        auto from = pointAt(segments[segment.segment], segment.interval.begin);
+        auto to = pointAt(segments[segment.segment], segment.interval.end);
+        from.duration = std::min(from.duration, options.maximum_duration);
+        to.duration = std::min(to.duration, options.maximum_duration);
+        return std::pair{from, to};
+    };
+
     Bounds bounds;
     auto found_point = false;
-    for (const auto &polyline : polylines)
+    for (const auto segment : selected)
     {
-        for (const auto &point : polyline)
+        const auto [from, to] = endpoints(segment);
+        for (const auto &point : {from, to})
         {
-            if (!isUsable(point))
-                continue;
-
             const auto lon = longitude(point.coordinate);
             const auto lat = latitude(point.coordinate);
             if (std::abs(lat) >= 90.)
@@ -526,12 +755,11 @@ rasterizeWeightedPolylines(const std::span<const WeightedPolyline> polylines,
 
     const auto projection = makeProjection(center);
     MetricBounds metric_bounds;
-    for (const auto &polyline : polylines)
+    for (const auto segment : selected)
     {
-        for (const auto &point : polyline)
+        const auto [from, to] = endpoints(segment);
+        for (const auto &point : {from, to})
         {
-            if (!isUsable(point))
-                continue;
             if (std::abs(longitude(point.coordinate) - projection.reference_lon) >= 180.)
                 return {{}, RasterizationError::TouchesLongitudeBoundary};
             const auto projected = projection.project(point.coordinate);
@@ -568,97 +796,23 @@ rasterizeWeightedPolylines(const std::span<const WeightedPolyline> polylines,
         static_cast<double>(static_cast<long double>(bounds_in_cells->min_x) * options.cell_size),
         static_cast<double>(static_cast<long double>(bounds_in_cells->min_y) * options.cell_size)};
 
-    std::vector<PolylineGroup> groups;
-    groups.reserve(polylines.size());
-    for (std::size_t index = 0; index < polylines.size(); ++index)
-    {
-        std::optional<std::optional<PackedGeometryID>> geometry_id;
-        for (const auto &point : polylines[index])
-        {
-            if (!isUsable(point))
-                continue;
-            if (!geometry_id)
-                geometry_id = point.geometry_id;
-            else if (*geometry_id != point.geometry_id)
-                return {{}, RasterizationError::InvalidOptions};
-        }
-        groups.push_back({geometry_id.value_or(std::nullopt), index});
-    }
-
-    std::vector<std::size_t> polyline_order(polylines.size());
-    std::iota(polyline_order.begin(), polyline_order.end(), 0);
-    std::sort(polyline_order.begin(),
-              polyline_order.end(),
-              [&](const auto left, const auto right)
-              {
-                  if (lessGroup(groups[left], groups[right]))
-                      return true;
-                  if (lessGroup(groups[right], groups[left]))
-                      return false;
-                  return left < right;
-              });
-
-    std::vector<RasterLabel> group_values(grid.values.size());
-    std::vector<std::size_t> touched_cells;
-    touched_cells.reserve(std::min(grid.values.size(), options.maximum_rasterization_steps));
     std::size_t rasterization_steps = 0;
-    for (std::size_t order_begin = 0; order_begin < polyline_order.size();)
+    const auto update_cell = [&](const std::size_t x, const std::size_t y, const double duration)
     {
-        auto order_end = order_begin + 1;
-        while (order_end < polyline_order.size() &&
-               sameGroup(groups[polyline_order[order_begin]], groups[polyline_order[order_end]]))
-        {
-            ++order_end;
-        }
-
-        const auto update_cell =
-            [&](const std::size_t x, const std::size_t y, const RasterLabel label)
-        {
-            BOOST_ASSERT(x < grid.width);
-            BOOST_ASSERT(y < grid.height);
-            if (rasterization_steps >= options.maximum_rasterization_steps)
-                return false;
-            const auto index = y * grid.width + x;
-            if (!std::isfinite(group_values[index].weight))
-                touched_cells.push_back(index);
-            group_values[index] = betterLabel(group_values[index], label);
-            ++rasterization_steps;
-            return true;
-        };
-
-        for (auto order_index = order_begin; order_index < order_end; ++order_index)
-        {
-            const auto &polyline = polylines[polyline_order[order_index]];
-            const WeightedPolylinePoint *previous = nullptr;
-            for (const auto &point : polyline)
-            {
-                if (!isUsable(point))
-                {
-                    previous = nullptr;
-                    continue;
-                }
-
-                if (previous == nullptr)
-                {
-                    if (!rasterizeSegment(grid, point, point, update_cell))
-                        return {{}, RasterizationError::TooBig};
-                }
-                else
-                {
-                    if (!rasterizeSegment(grid, *previous, point, update_cell))
-                        return {{}, RasterizationError::TooBig};
-                }
-                previous = &point;
-            }
-        }
-
-        for (const auto index : touched_cells)
-        {
-            grid.values[index] = std::min(grid.values[index], group_values[index].duration);
-            group_values[index] = {};
-        }
-        touched_cells.clear();
-        order_begin = order_end;
+        BOOST_ASSERT(x < grid.width);
+        BOOST_ASSERT(y < grid.height);
+        if (rasterization_steps >= options.maximum_rasterization_steps)
+            return false;
+        const auto index = y * grid.width + x;
+        grid.values[index] = std::min(grid.values[index], duration);
+        ++rasterization_steps;
+        return true;
+    };
+    for (const auto segment : selected)
+    {
+        const auto [from, to] = endpoints(segment);
+        if (!rasterizeSegment(grid, from, to, update_cell))
+            return {{}, RasterizationError::TooBig};
     }
     return {std::move(grid), RasterizationError::None};
 }

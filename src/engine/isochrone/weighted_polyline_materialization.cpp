@@ -23,6 +23,7 @@ struct InternalPoint
     util::Coordinate coordinate;
     long double weight;
     long double duration;
+    std::optional<long double> geometry_position = std::nullopt;
 };
 
 using InternalPolyline = std::vector<InternalPoint>;
@@ -366,7 +367,8 @@ buildClippedGeometry(const GeometryData &geometry,
             return MaterializationError::InvalidGeometry;
         polyline.push_back({first_coordinate,
                             from_alias<long double>(label.weight),
-                            from_alias<long double>(label.duration)});
+                            from_alias<long double>(label.duration),
+                            static_cast<long double>(first.segment_index) + first.fraction});
         return MaterializationError::None;
     }
 
@@ -389,7 +391,8 @@ buildClippedGeometry(const GeometryData &geometry,
          label.anchor == DurationAnchor::FirstCoordinate ? anchor_weight
                                                          : anchor_weight + total_weight,
          label.anchor == DurationAnchor::FirstCoordinate ? anchor_duration
-                                                         : anchor_duration + total_duration});
+                                                         : anchor_duration + total_duration,
+         static_cast<long double>(first.segment_index) + first.fraction});
 
     auto duration_from_first = 0.L;
     auto weight_from_first = 0.L;
@@ -407,7 +410,10 @@ buildClippedGeometry(const GeometryData &geometry,
                                 : anchor_weight + total_weight - weight_from_first;
         const auto coordinate_override =
             index == last.segment_index ? last_coordinate_override : std::nullopt;
-        polyline.push_back({pointAt(endpoint, coordinate_override), weight, duration});
+        polyline.push_back({pointAt(endpoint, coordinate_override),
+                            weight,
+                            duration,
+                            static_cast<long double>(endpoint.segment_index) + endpoint.fraction});
     }
 
     for (std::size_t index = 1; index < polyline.size(); ++index)
@@ -439,11 +445,18 @@ MaterializationError appendClippedPolyline(const InternalPolyline &input,
         if (!std::isfinite(duration) || !std::isfinite(weight))
             return MaterializationError::InvalidGeometry;
         if (!active.empty() && active.back().coordinate == point.coordinate &&
-            active.back().duration == duration && active.back().weight == weight)
+            active.back().duration == duration && active.back().weight == weight &&
+            active.back().geometry_position == point.geometry_position)
             return MaterializationError::None;
         if (!hasCapacity(output_points, 1, limits.maximum_output_points))
             return MaterializationError::BudgetExceeded;
-        active.push_back({point.coordinate, duration, weight, geometry_id});
+        active.push_back({point.coordinate,
+                          duration,
+                          weight,
+                          geometry_id,
+                          point.geometry_position
+                              ? std::optional<double>{static_cast<double>(*point.geometry_position)}
+                              : std::nullopt});
         ++output_points;
         return MaterializationError::None;
     };
@@ -475,9 +488,15 @@ MaterializationError appendClippedPolyline(const InternalPolyline &input,
         const auto fraction = (cutoff - from.duration) / (to.duration - from.duration);
         BOOST_ASSERT(fraction >= 0.);
         BOOST_ASSERT(fraction <= 1.);
-        return InternalPoint{interpolateCoordinate(from.coordinate, to.coordinate, fraction),
-                             from.weight + (to.weight - from.weight) * fraction,
-                             cutoff};
+        return InternalPoint{
+            interpolateCoordinate(from.coordinate, to.coordinate, fraction),
+            from.weight + (to.weight - from.weight) * fraction,
+            cutoff,
+            from.geometry_position && to.geometry_position
+                ? std::optional<long double>{*from.geometry_position +
+                                             (*to.geometry_position - *from.geometry_position) *
+                                                 fraction}
+                : std::nullopt};
     };
 
     if (!clip_to_maximum_duration)
@@ -576,10 +595,18 @@ materializeGeometry(const datafacade::BaseDataFacade &facade,
     if (geometry_error != MaterializationError::None)
         return geometry_error;
 
-    const auto geometry_id = facade.GetGeometryIndex(label.node).id;
+    const auto geometry_index = facade.GetGeometryIndex(label.node);
+    if (!geometry_index.forward)
+    {
+        for (auto &point : polyline)
+        {
+            BOOST_ASSERT(point.geometry_position);
+            point.geometry_position = geometry.segment_durations.size() - *point.geometry_position;
+        }
+    }
     return appendClippedPolyline(polyline,
                                  from_alias<long double>(options.maximum_duration),
-                                 geometry_id,
+                                 geometry_index.id,
                                  options.clip_to_maximum_duration,
                                  options.limits,
                                  output,

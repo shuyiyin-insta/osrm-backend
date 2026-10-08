@@ -363,6 +363,10 @@ BOOST_AUTO_TEST_CASE(clips_forward_phantom_geometry_at_the_exact_snap)
     BOOST_CHECK_CLOSE(result.polylines[0].front().duration, 0., 1e-9);
     BOOST_CHECK_CLOSE(result.polylines[0][1].duration, 6., 1e-9);
     BOOST_CHECK_CLOSE(result.polylines[0].back().duration, 36., 1e-9);
+    BOOST_REQUIRE(result.polylines[0].front().geometry_position);
+    BOOST_CHECK_CLOSE(*result.polylines[0].front().geometry_position, 0.4, 1e-9);
+    BOOST_REQUIRE(result.polylines[0].back().geometry_position);
+    BOOST_CHECK_EQUAL(*result.polylines[0].back().geometry_position, 2.);
 }
 
 BOOST_AUTO_TEST_CASE(clips_reverse_phantom_geometry_in_legal_direction)
@@ -395,6 +399,10 @@ BOOST_AUTO_TEST_CASE(clips_reverse_phantom_geometry_in_legal_direction)
     BOOST_CHECK_CLOSE(longitude(result.polylines[0].front()), 0.5, 1e-9);
     BOOST_CHECK_CLOSE(longitude(result.polylines[0].back()), 0., 1e-9);
     BOOST_CHECK_CLOSE(result.polylines[0].back().duration, 35., 1e-9);
+    BOOST_REQUIRE(result.polylines[0].front().geometry_position);
+    BOOST_CHECK_CLOSE(*result.polylines[0].front().geometry_position, 0.5, 1e-9);
+    BOOST_REQUIRE(result.polylines[0].back().geometry_position);
+    BOOST_CHECK_EQUAL(*result.polylines[0].back().geometry_position, 0.);
 }
 
 BOOST_AUTO_TEST_CASE(materializes_an_inbound_phantom_prefix)
@@ -433,6 +441,10 @@ BOOST_AUTO_TEST_CASE(materializes_an_inbound_phantom_prefix)
     BOOST_CHECK_CLOSE(result.polylines[0].front().duration, 4., 1e-9);
     BOOST_CHECK_CLOSE(longitude(result.polylines[0].back()), 0.4, 1e-9);
     BOOST_CHECK_CLOSE(result.polylines[0].back().duration, 0., 1e-9);
+    BOOST_REQUIRE(result.polylines[0].front().geometry_position);
+    BOOST_CHECK_EQUAL(*result.polylines[0].front().geometry_position, 0.);
+    BOOST_REQUIRE(result.polylines[0].back().geometry_position);
+    BOOST_CHECK_CLOSE(*result.polylines[0].back().geometry_position, 0.4, 1e-9);
 }
 
 BOOST_AUTO_TEST_CASE(retains_an_approach_that_reaches_the_cutoff_before_the_network)

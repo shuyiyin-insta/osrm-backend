@@ -140,7 +140,10 @@ Status IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorith
 
     const auto rasterization =
         isochrone::rasterizeWeightedPolylines(materialization_result.polylines,
-                                              {100., MAX_GRID_CELLS, MAX_RASTERIZATION_STEPS},
+                                              {100.,
+                                               MAX_GRID_CELLS,
+                                               MAX_RASTERIZATION_STEPS,
+                                               isochrone::durationToSeconds(maximum_duration)},
                                               parameters.coordinates.front());
     switch (rasterization.error)
     {
