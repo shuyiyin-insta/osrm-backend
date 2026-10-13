@@ -30,14 +30,14 @@ void searchWithUTurn(SearchEngineData<Algorithm> &engine_working_data,
         if (source.IsValidForwardSource())
         {
             forward_heap.Insert(source.forward_segment_id.id,
-                                EdgeWeight{0} - source.GetForwardWeightPlusOffset(),
+                                source.GetForwardWeightAsSource(),
                                 source.forward_segment_id.id);
         }
 
         if (source.IsValidReverseSource())
         {
             forward_heap.Insert(source.reverse_segment_id.id,
-                                EdgeWeight{0} - source.GetReverseWeightPlusOffset(),
+                                source.GetReverseWeightAsSource(),
                                 source.reverse_segment_id.id);
         }
     }
@@ -46,13 +46,13 @@ void searchWithUTurn(SearchEngineData<Algorithm> &engine_working_data,
         if (target.IsValidForwardTarget())
         {
             reverse_heap.Insert(target.forward_segment_id.id,
-                                target.GetForwardWeightPlusOffset(),
+                                target.GetForwardWeightAsTarget(),
                                 target.forward_segment_id.id);
         }
         if (target.IsValidReverseTarget())
         {
             reverse_heap.Insert(target.reverse_segment_id.id,
-                                target.GetReverseWeightPlusOffset(),
+                                target.GetReverseWeightAsTarget(),
                                 target.reverse_segment_id.id);
         }
     }
@@ -94,7 +94,7 @@ void search(SearchEngineData<Algorithm> &engine_working_data,
         forward_heap.Clear();
         reverse_heap.Clear();
         reverse_heap.Insert(target.forward_segment_id.id,
-                            target.GetForwardWeightPlusOffset(),
+                            target.GetForwardWeightAsTarget(),
                             target.forward_segment_id.id);
 
         for (const auto i : util::irange<std::size_t>(0UL, source_candidates.size()))
@@ -103,16 +103,16 @@ void search(SearchEngineData<Algorithm> &engine_working_data,
             if (search_from_forward_node[i] && candidate.IsValidForwardSource())
             {
                 forward_heap.Insert(candidate.forward_segment_id.id,
-                                    total_weight_to_forward[i] -
-                                        candidate.GetForwardWeightPlusOffset(),
+                                    total_weight_to_forward[i] +
+                                        candidate.GetForwardWeightAsSource(),
                                     candidate.forward_segment_id.id);
             }
 
             if (search_from_reverse_node[i] && candidate.IsValidReverseSource())
             {
                 forward_heap.Insert(candidate.reverse_segment_id.id,
-                                    total_weight_to_reverse[i] -
-                                        candidate.GetReverseWeightPlusOffset(),
+                                    total_weight_to_reverse[i] +
+                                        candidate.GetReverseWeightAsSource(),
                                     candidate.reverse_segment_id.id);
             }
         }
@@ -132,7 +132,7 @@ void search(SearchEngineData<Algorithm> &engine_working_data,
         forward_heap.Clear();
         reverse_heap.Clear();
         reverse_heap.Insert(target.reverse_segment_id.id,
-                            target.GetReverseWeightPlusOffset(),
+                            target.GetReverseWeightAsTarget(),
                             target.reverse_segment_id.id);
 
         BOOST_ASSERT(search_from_forward_node.size() == source_candidates.size());
@@ -142,16 +142,16 @@ void search(SearchEngineData<Algorithm> &engine_working_data,
             if (search_from_forward_node[i] && candidate.IsValidForwardSource())
             {
                 forward_heap.Insert(candidate.forward_segment_id.id,
-                                    total_weight_to_forward[i] -
-                                        candidate.GetForwardWeightPlusOffset(),
+                                    total_weight_to_forward[i] +
+                                        candidate.GetForwardWeightAsSource(),
                                     candidate.forward_segment_id.id);
             }
 
             if (search_from_reverse_node[i] && candidate.IsValidReverseSource())
             {
                 forward_heap.Insert(candidate.reverse_segment_id.id,
-                                    total_weight_to_reverse[i] -
-                                        candidate.GetReverseWeightPlusOffset(),
+                                    total_weight_to_reverse[i] +
+                                        candidate.GetReverseWeightAsSource(),
                                     candidate.reverse_segment_id.id);
             }
         }
@@ -247,7 +247,12 @@ constructRouteResult(const DataFacade<Algorithm> &facade,
                          source_candidates.end(),
                          [&start_node](const auto &source_phantom)
                          {
-                             return (start_node == source_phantom.forward_segment_id.id ||
+                             // per role, as endpointsFromCandidates: a candidate
+                             // may share its ids with another that serves the
+                             // other role
+                             return (source_phantom.IsValidForwardSource() &&
+                                     start_node == source_phantom.forward_segment_id.id) ||
+                                    (source_phantom.IsValidReverseSource() &&
                                      start_node == source_phantom.reverse_segment_id.id);
                          });
         BOOST_ASSERT(source_it != source_candidates.end());
@@ -257,7 +262,9 @@ constructRouteResult(const DataFacade<Algorithm> &facade,
                          target_candidates.end(),
                          [&end_node](const auto &target_phantom)
                          {
-                             return (end_node == target_phantom.forward_segment_id.id ||
+                             return (target_phantom.IsValidForwardTarget() &&
+                                     end_node == target_phantom.forward_segment_id.id) ||
+                                    (target_phantom.IsValidReverseTarget() &&
                                      end_node == target_phantom.reverse_segment_id.id);
                          });
         BOOST_ASSERT(target_it != target_candidates.end());
@@ -504,14 +511,10 @@ struct route_state
     }
 
     size_t previousForwardPath(size_t previous_leg) const
-    {
-        return previous_leg_path_offset + 2 * previous_leg;
-    }
+    { return previous_leg_path_offset + 2 * previous_leg; }
 
     size_t previousReversePath(size_t previous_leg) const
-    {
-        return previous_leg_path_offset + 2 * previous_leg + 1;
-    }
+    { return previous_leg_path_offset + 2 * previous_leg + 1; }
 
     void addSearchResult(const PhantomCandidatesToTarget &candidates,
                          const std::vector<NodeID> &packed_leg_to_forward,

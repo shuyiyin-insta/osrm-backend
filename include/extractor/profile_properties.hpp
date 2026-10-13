@@ -37,30 +37,22 @@ struct ProfileProperties
     double GetUturnPenalty() const { return u_turn_penalty / 10.; }
 
     void SetUturnPenalty(const double u_turn_penalty_)
-    {
-        u_turn_penalty = boost::numeric_cast<int>(u_turn_penalty_ * 10.);
-    }
+    { u_turn_penalty = boost::numeric_cast<int>(u_turn_penalty_ * 10.); }
 
     double GetTrafficSignalPenalty() const { return traffic_signal_penalty / 10.; }
 
     void SetTrafficSignalPenalty(const double traffic_signal_penalty_)
-    {
-        traffic_signal_penalty = boost::numeric_cast<int>(traffic_signal_penalty_ * 10.);
-    }
+    { traffic_signal_penalty = boost::numeric_cast<int>(traffic_signal_penalty_ * 10.); }
 
     double GetMaxSpeedForMapMatching() const { return max_speed_for_map_matching; }
 
     void SetMaxSpeedForMapMatching(const double max_speed_for_map_matching_)
-    {
-        max_speed_for_map_matching = max_speed_for_map_matching_;
-    }
+    { max_speed_for_map_matching = max_speed_for_map_matching_; }
 
     double GetMaxCollapseDistance() const { return max_collapse_distance; }
 
     void SetMaxCollapseDistance(const double max_collapse_distance_)
-    {
-        max_collapse_distance = max_collapse_distance_;
-    }
+    { max_collapse_distance = max_collapse_distance_; }
 
     void SetWeightName(const std::string &name)
     {
@@ -82,9 +74,7 @@ struct ProfileProperties
 
     // Mark this combination of classes as excludable
     void SetExcludableClasses(std::size_t index, ClassData classes)
-    {
-        excludable_classes[index] = classes;
-    }
+    { excludable_classes[index] = classes; }
 
     // Check if this classes are excludable
     std::optional<std::size_t> ClassesAreExcludable(ClassData classes) const
@@ -118,9 +108,7 @@ struct ProfileProperties
     double GetWeightMultiplier() const { return std::pow(10., weight_precision); }
 
     double GetMaxTurnWeight() const
-    {
-        return from_alias<double>(MAXIMAL_TURN_PENALTY) / GetWeightMultiplier();
-    }
+    { return from_alias<double>(MAXIMAL_TURN_PENALTY) / GetWeightMultiplier(); }
 
     //! penalty to cross a traffic light in deci-seconds
     std::int32_t traffic_signal_penalty;
@@ -144,6 +132,20 @@ struct ProfileProperties
     unsigned weight_precision = 1;
     bool force_split_edges = false;
     bool call_tagless_node_function = true;
+    //! emit an open area's whole visibility graph rather than the pruned mesh.  The
+    //! pruned mesh -- the shortest-path tree rooted at each entry point -- is already
+    //! exact for any journey with one end at an entry point, so this is only needed for
+    //! one that begins and ends inside the same area.  See docs/areas.md.
+    bool area_emit_visibility_graph = false;
+    //! speed in m/s used to cross the interior of an open area on a straight line.
+    //! Deliberately not called walking_speed: the profiles already use that name for a
+    //! speed in km/h, and mixing the two units would be silent.
+    double area_walking_speed = 1.4;
+    //! effective area, in square metres, below which a vertex of an open area is
+    //! simplified away at extraction (Visvalingam-Whyatt).  An OSM plaza is drawn to be
+    //! looked at, and its kerbstone detail is paid for again on every query that snaps
+    //! into it.  Zero switches it off.  See extractor/area/simplify.hpp.
+    double area_simplify_threshold = 0.0;
 };
 } // namespace osrm::extractor
 

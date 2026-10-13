@@ -90,15 +90,23 @@ LD_LIBRARY_PATH=/usr/local/lib64:${LD_LIBRARY_PATH} \
 CCACHE_DIR=/ccache \
 CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-release"\
 """
+
 before-build = "ccache -s && ccache -M 500M"
 repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
+
+# Override the triplet for aarch64 — the base environment hard-codes
+# x64-linux-release which only works on x86_64.  The override appends a
+# second CMAKE_ARGS whose value shadows the base one.
+[[tool.cibuildwheel.overrides]]
+select = "*-manylinux_aarch64"
+environment = 'CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=arm64-linux-release"'
 
 [tool.cibuildwheel.macos]
 # Build deps come from vcpkg (same pattern as Windows). VCPKG_ROOT is
 # exported on the runner by lukka/run-vcpkg in the workflow and inherited
 # by cibuildwheel; CMAKE_ARGS routes the cmake configure through the vcpkg
 # toolchain. No triplet override — vcpkg's autodetect picks arm64-osx on
-# Apple Silicon and x64-osx on Intel, matching the main build-matrix step's
+# the Apple Silicon runners, matching the main build-matrix step's
 # CMakePresets, so the wheel hits the runner-level bincache populated there.
 environment = """\
 MACOSX_DEPLOYMENT_TARGET=15.0 \

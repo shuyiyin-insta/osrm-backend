@@ -48,9 +48,7 @@ template <typename MultiLevelPartition>
 inline LevelID getNodeQueryLevel(const MultiLevelPartition &partition,
                                  NodeID node,
                                  const PhantomEndpoints &endpoints)
-{
-    return getNodeQueryLevel(partition, node, endpoints.source_phantom, endpoints.target_phantom);
-}
+{ return getNodeQueryLevel(partition, node, endpoints.source_phantom, endpoints.target_phantom); }
 
 template <typename MultiLevelPartition>
 inline LevelID getNodeQueryLevel(const MultiLevelPartition &partition,
@@ -70,50 +68,63 @@ inline LevelID getNodeQueryLevel(const MultiLevelPartition &partition,
     return min_level;
 }
 
+// The query level of a node against a source and a target is the lower of its highest
+// different level with either, so over two sets of candidates the minimum over every pair
+// is the minimum over the sources and the minimum over the targets, taken separately.
+// Taken pairwise, the cost is quadratic in the number of candidates, and a coordinate
+// snapped inside an open area carries a candidate per way on every vertex it sees,
+// hundreds on a large plaza: the partition lookups per relaxed node came to outweigh
+// the search itself by an order of magnitude.
+template <typename MultiLevelPartition>
+inline LevelID lowestDifferentLevel(const MultiLevelPartition &partition,
+                                    NodeID node,
+                                    const std::vector<PhantomNode> &phantoms)
+{
+    LevelID level = INVALID_LEVEL_ID;
+    for (const auto &phantom : phantoms)
+    {
+        if (phantom.forward_segment_id.enabled)
+        {
+            level = std::min(
+                level, partition.GetHighestDifferentLevel(phantom.forward_segment_id.id, node));
+        }
+        if (phantom.reverse_segment_id.enabled)
+        {
+            level = std::min(
+                level, partition.GetHighestDifferentLevel(phantom.reverse_segment_id.id, node));
+        }
+        if (level == 0)
+        {
+            break;
+        }
+    }
+    return level;
+}
+
 template <typename MultiLevelPartition>
 inline LevelID getNodeQueryLevel(const MultiLevelPartition &partition,
                                  NodeID node,
                                  const PhantomEndpointCandidates &endpoint_candidates)
 {
-    auto min_level = std::accumulate(
-        endpoint_candidates.source_phantoms.begin(),
-        endpoint_candidates.source_phantoms.end(),
-        INVALID_LEVEL_ID,
-        [&](LevelID level_1, const PhantomNode &source)
-        {
-            return std::min(
-                level_1,
-                std::accumulate(endpoint_candidates.target_phantoms.begin(),
-                                endpoint_candidates.target_phantoms.end(),
-                                level_1,
-                                [&](LevelID level_2, const PhantomNode &target) {
-                                    return std::min(
-                                        level_2,
-                                        getNodeQueryLevel(partition, node, source, target));
-                                }));
-        });
-    return min_level;
+    // neither set is ever empty, or without an enabled direction, by the time a search
+    // asks; a set that were would answer INVALID_LEVEL_ID, as the pairwise minimum did
+    return std::min(lowestDifferentLevel(partition, node, endpoint_candidates.source_phantoms),
+                    lowestDifferentLevel(partition, node, endpoint_candidates.target_phantoms));
 }
 
 template <typename PhantomCandidateT>
 inline bool checkParentCellRestriction(CellID, const PhantomCandidateT &)
-{
-    return true;
-}
+{ return true; }
 
 // Restricted search (Args is LevelID, CellID):
 //   * use the fixed level for queries
 //   * check if the node cell is the same as the specified parent
 template <typename MultiLevelPartition>
 inline LevelID getNodeQueryLevel(const MultiLevelPartition &, NodeID, LevelID level, CellID)
-{
-    return level;
-}
+{ return level; }
 
 inline bool checkParentCellRestriction(CellID cell, LevelID, CellID parent)
-{
-    return cell == parent;
-}
+{ return cell == parent; }
 
 // Unrestricted search with a single phantom node (Args is const PhantomNode &):
 //   * use partition.GetQueryLevel to find the node query level
@@ -752,35 +763,37 @@ double getNetworkDistance(SearchEngineData<Algorithm> &engine_working_data,
     if (source_phantom.IsValidForwardSource())
     {
         forward_heap.Insert(source_phantom.forward_segment_id.id,
-                            EdgeWeight{0} - source_phantom.GetForwardWeightPlusOffset(),
+                            source_phantom.GetForwardWeightAsSource(),
                             {source_phantom.forward_segment_id.id,
                              false,
-                             EdgeDistance{0} - source_phantom.GetForwardDistance()});
+                             source_phantom.GetForwardDistanceAsSource()});
     }
 
     if (source_phantom.IsValidReverseSource())
     {
         forward_heap.Insert(source_phantom.reverse_segment_id.id,
-                            EdgeWeight{0} - source_phantom.GetReverseWeightPlusOffset(),
+                            source_phantom.GetReverseWeightAsSource(),
                             {source_phantom.reverse_segment_id.id,
                              false,
-                             EdgeDistance{0} - source_phantom.GetReverseDistance()});
+                             source_phantom.GetReverseDistanceAsSource()});
     }
 
     if (target_phantom.IsValidForwardTarget())
     {
-        reverse_heap.Insert(
-            target_phantom.forward_segment_id.id,
-            target_phantom.GetForwardWeightPlusOffset(),
-            {target_phantom.forward_segment_id.id, false, target_phantom.GetForwardDistance()});
+        reverse_heap.Insert(target_phantom.forward_segment_id.id,
+                            target_phantom.GetForwardWeightAsTarget(),
+                            {target_phantom.forward_segment_id.id,
+                             false,
+                             target_phantom.GetForwardDistanceAsTarget()});
     }
 
     if (target_phantom.IsValidReverseTarget())
     {
-        reverse_heap.Insert(
-            target_phantom.reverse_segment_id.id,
-            target_phantom.GetReverseWeightPlusOffset(),
-            {target_phantom.reverse_segment_id.id, false, target_phantom.GetReverseDistance()});
+        reverse_heap.Insert(target_phantom.reverse_segment_id.id,
+                            target_phantom.GetReverseWeightAsTarget(),
+                            {target_phantom.reverse_segment_id.id,
+                             false,
+                             target_phantom.GetReverseDistanceAsTarget()});
     }
 
     const PhantomEndpoints endpoints{source_phantom, target_phantom};

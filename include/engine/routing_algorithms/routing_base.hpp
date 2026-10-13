@@ -34,14 +34,14 @@ void insertSourceInForwardHeap(Heap &forward_heap, const PhantomNode &source)
     if (source.IsValidForwardSource())
     {
         forward_heap.Insert(source.forward_segment_id.id,
-                            EdgeWeight{0} - source.GetForwardWeightPlusOffset(),
+                            source.GetForwardWeightAsSource(),
                             source.forward_segment_id.id);
     }
 
     if (source.IsValidReverseSource())
     {
         forward_heap.Insert(source.reverse_segment_id.id,
-                            EdgeWeight{0} - source.GetReverseWeightPlusOffset(),
+                            source.GetReverseWeightAsSource(),
                             source.reverse_segment_id.id);
     }
 }
@@ -52,14 +52,14 @@ void insertTargetInReverseHeap(Heap &reverse_heap, const PhantomNode &target)
     if (target.IsValidForwardTarget())
     {
         reverse_heap.Insert(target.forward_segment_id.id,
-                            target.GetForwardWeightPlusOffset(),
+                            target.GetForwardWeightAsTarget(),
                             target.forward_segment_id.id);
     }
 
     if (target.IsValidReverseTarget())
     {
         reverse_heap.Insert(target.reverse_segment_id.id,
-                            target.GetReverseWeightPlusOffset(),
+                            target.GetReverseWeightAsTarget(),
                             target.reverse_segment_id.id);
     }
 }
@@ -73,6 +73,17 @@ std::vector<NodeID> getForwardForceNodes(const PhantomEndpointCandidates &candid
 std::vector<NodeID> getForwardForceNodes(const PhantomCandidatesToTarget &candidates);
 std::vector<NodeID> getBackwardForceNodes(const PhantomEndpointCandidates &candidates);
 std::vector<NodeID> getBackwardForceNodes(const PhantomCandidatesToTarget &candidates);
+
+// Both lists at once, for a search that seeds both directions of every target into one
+// heap.  A source and a target on one edge-based node with the source the further along
+// need a loop, and the direct and alternative searches told them apart at the seed by the
+// sign of the weight alone: the graph part of a source's key is negative, a target's
+// positive, and their sum is negative exactly when the target sits before the source.
+// That holds only while a phantom's weight is nothing but its share of the node; a
+// phantom carrying a cost of its own at either end, as one snapped into an open area
+// is about to, lifts the sum above zero and the seed is taken for a path.  Naming the
+// nodes is what the via search has always done, and costs nothing.
+std::vector<NodeID> getForceStepNodes(const PhantomEndpointCandidates &candidates);
 
 // Find the specific phantom node endpoints for a given path from a list of candidates.
 PhantomEndpoints endpointsFromCandidates(const PhantomEndpointCandidates &candidates,
@@ -121,18 +132,20 @@ void insertSourceInHeap(ManyToManyQueryHeap &heap, const PhantomNodeCandidates &
         if (phantom_node.IsValidForwardSource())
         {
             heap.Insert(phantom_node.forward_segment_id.id,
-                        EdgeWeight{0} - phantom_node.GetForwardWeightPlusOffset(),
+                        phantom_node.GetForwardWeightAsSource(),
                         {phantom_node.forward_segment_id.id,
-                         EdgeDuration{0} - phantom_node.GetForwardDuration(),
-                         EdgeDistance{0} - phantom_node.GetForwardDistance()});
+                         phantom_node.GetForwardDurationAsSource(),
+                         phantom_node.GetForwardDistanceAsSource(),
+                         phantom_node.approach_weight});
         }
         if (phantom_node.IsValidReverseSource())
         {
             heap.Insert(phantom_node.reverse_segment_id.id,
-                        EdgeWeight{0} - phantom_node.GetReverseWeightPlusOffset(),
+                        phantom_node.GetReverseWeightAsSource(),
                         {phantom_node.reverse_segment_id.id,
-                         EdgeDuration{0} - phantom_node.GetReverseDuration(),
-                         EdgeDistance{0} - phantom_node.GetReverseDistance()});
+                         phantom_node.GetReverseDurationAsSource(),
+                         phantom_node.GetReverseDistanceAsSource(),
+                         phantom_node.approach_weight});
         }
     }
 }
@@ -145,18 +158,20 @@ void insertTargetInHeap(ManyToManyQueryHeap &heap, const PhantomNodeCandidates &
         if (phantom_node.IsValidForwardTarget())
         {
             heap.Insert(phantom_node.forward_segment_id.id,
-                        phantom_node.GetForwardWeightPlusOffset(),
+                        phantom_node.GetForwardWeightAsTarget(),
                         {phantom_node.forward_segment_id.id,
-                         phantom_node.GetForwardDuration(),
-                         phantom_node.GetForwardDistance()});
+                         phantom_node.GetForwardDurationAsTarget(),
+                         phantom_node.GetForwardDistanceAsTarget(),
+                         phantom_node.approach_weight});
         }
         if (phantom_node.IsValidReverseTarget())
         {
             heap.Insert(phantom_node.reverse_segment_id.id,
-                        phantom_node.GetReverseWeightPlusOffset(),
+                        phantom_node.GetReverseWeightAsTarget(),
                         {phantom_node.reverse_segment_id.id,
-                         phantom_node.GetReverseDuration(),
-                         phantom_node.GetReverseDistance()});
+                         phantom_node.GetReverseDurationAsTarget(),
+                         phantom_node.GetReverseDistanceAsTarget(),
+                         phantom_node.approach_weight});
         }
     }
 }
@@ -353,7 +368,7 @@ double getPathDistance(const DataFacade<Algorithm> &facade,
 
     for (const auto &p : unpacked_path)
     {
-        const auto current_coordinate = facade.GetCoordinateOfNode(p.turn_via_node);
+        const auto current_coordinate = coordinateOf(facade, p);
 
         distance +=
             util::coordinate_calculation::greatCircleDistance(prev_coordinate, current_coordinate);

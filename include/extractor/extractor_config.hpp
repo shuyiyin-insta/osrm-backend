@@ -65,14 +65,16 @@ struct ExtractorConfig final : storage::IOConfig
                ".osrm.icd",
                ".osrm.cnbg",
                ".osrm.cnbg_to_ebg",
-               ".osrm.maneuver_overrides"})
+               ".osrm.maneuver_overrides",
+               // only written when the profile meshes pedestrian areas
+               ".osrm.openareas",
+               ".osrm.openareas.ramIndex",
+               ".osrm.openareas.fileIndex"})
     {
     }
 
     void UseDefaultOutputNames(const std::filesystem::path &base)
-    {
-        IOConfig::UseDefaultOutputNames(base);
-    }
+    { IOConfig::UseDefaultOutputNames(base); }
 
     std::filesystem::path input_path;
     std::filesystem::path profile_path;
@@ -87,6 +89,8 @@ struct ExtractorConfig final : storage::IOConfig
     bool parse_conditionals = false;
     bool use_locations_cache = true;
     bool dump_nbg_graph = false;
+
+    std::string driving_side_index = "on";
 };
 } // namespace osrm::extractor
 

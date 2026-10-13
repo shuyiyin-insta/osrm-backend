@@ -141,16 +141,12 @@ class FileReader
     }
 
     template <typename T> void ReadInto(std::vector<T> &target)
-    {
-        ReadInto(target.data(), target.size());
-    }
+    { ReadInto(target.data(), target.size()); }
 
     template <typename T> void ReadInto(T &target) { ReadInto(&target, 1); }
 
     template <typename T> void Skip(const std::size_t element_count)
-    {
-        boost::iostreams::seek(input_stream, element_count * sizeof(T), BOOST_IOS::cur);
-    }
+    { boost::iostreams::seek(input_stream, element_count * sizeof(T), BOOST_IOS::cur); }
 
     /*******************************************/
 
@@ -181,6 +177,22 @@ class FileReader
 
         if (!expected_fingerprint.IsDataCompatible(loaded_fingerprint))
         {
+            if (!expected_fingerprint.IsABICompatible(loaded_fingerprint))
+            {
+                throw util::RuntimeError(
+                    std::string(filepath.string()) + " was prepared on " +
+                        loaded_fingerprint.GetOperatingSystemString() + " (" +
+                        std::to_string(loaded_fingerprint.GetPointerBytes() * 8) + "-bit, " +
+                        loaded_fingerprint.GetEndiannessString() + ") but this is " +
+                        expected_fingerprint.GetOperatingSystemString() + " (" +
+                        std::to_string(expected_fingerprint.GetPointerBytes() * 8) + "-bit, " +
+                        expected_fingerprint.GetEndiannessString() +
+                        "); OSRM datasets are not portable across platforms and must be "
+                        "re-processed on the target platform",
+                    ErrorCode::IncompatibleFileVersion,
+                    SOURCE_REF);
+            }
+
             const std::string fileversion =
                 std::to_string(loaded_fingerprint.GetMajorVersion()) + "." +
                 std::to_string(loaded_fingerprint.GetMinorVersion()) + "." +
@@ -252,9 +264,7 @@ class FileWriter
     }
 
     template <typename T> void WriteFrom(const std::vector<T> &src)
-    {
-        WriteFrom(src.data(), src.size());
-    }
+    { WriteFrom(src.data(), src.size()); }
 
     template <typename T> void WriteFrom(const T &src) { WriteFrom(&src, 1); }
 
@@ -267,9 +277,7 @@ class FileWriter
     }
 
     template <typename T> void Skip(const std::size_t element_count)
-    {
-        boost::iostreams::seek(output_stream, element_count * sizeof(T), BOOST_IOS::cur);
-    }
+    { boost::iostreams::seek(output_stream, element_count * sizeof(T), BOOST_IOS::cur); }
 
     void SkipToBeginning()
     {

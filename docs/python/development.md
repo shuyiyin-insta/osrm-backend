@@ -2,17 +2,16 @@
 
 ## Installing for production
 
-Pre-built wheels are published to PyPI for Linux (x86\_64), macOS (x86\_64),
-and Windows (amd64). They use the CPython 3.12 stable ABI (`cp312-abi3`) and
-therefore install on Python 3.12+:
+Pre-built wheels are published to PyPI for Linux (x86\_64 and aarch64),
+macOS (arm64), and Windows (amd64). They use the CPython 3.12 stable ABI
+(`cp312-abi3`) and therefore install on Python 3.12+:
 
 ```bash
 pip install osrm-bindings
 ```
 
 The package itself supports Python 3.10+ when built from source — needed for
-3.10/3.11, aarch64 Linux, arm64 macOS, or any platform without a pre-built
-wheel:
+3.10/3.11, x86\_64 macOS, or any platform without a pre-built wheel:
 
 ```bash
 pip install osrm-bindings --no-binary osrm-bindings
@@ -282,6 +281,29 @@ not by pushing a tag by hand. The workflow bumps the version, creates the tag,
 drives CI, downloads the built wheels, and publishes to both PyPI and npm in
 one shot.
 
+### Release credentials
+
+The workflow pushes the version bump, the tag, and the GitHub Release with the
+`BACKEND_RELEASE_TOKEN` secret rather than the default `GITHUB_TOKEN`, because a
+tag pushed with `GITHUB_TOKEN` does not trigger the `osrm-backend.yml` run that
+builds the release artifacts. The token needs Contents: read and write, to push
+the version bump and the tag, and Actions: read, so the job can poll the CI run
+it waits on. A classic PAT covers both with the `repo` scope.
+
+The first step of the release job checks that token against the GitHub API
+before anything else runs, so a bad token fails the job in seconds with an
+explicit message instead of a `could not read Username for 'https://github.com'`
+error out of `actions/checkout`. It separates the three cases that look alike
+from the outside: an unreachable API (a runner network fault, not a token
+fault), HTTP 401 (the value is not a credential GitHub recognizes, so it has
+expired, been revoked, or picked up stray whitespace on the way into the
+secret), and HTTP 403 (the token is real but its grant is too narrow).
+
+When the token is within 45 days of expiring the step emits a warning on the
+run, which is the cue to rotate the secret before the next monthly release.
+Expiry comes from the `github-authentication-token-expiration` response header,
+which is absent for tokens that never expire.
+
 ### Scheduled monthly release
 
 A cron on the 1st of each month at 08:00 UTC runs the workflow against
@@ -290,9 +312,9 @@ A cron on the 1st of each month at 08:00 UTC runs the workflow against
 1. Compute the next version as `(YYYY-2000).M.patchlevel` (e.g. `26.4.0`).
 2. Bump `package.json` + `package-lock.json`, commit, create annotated tag
    `v<version>`, push branch and tag.
-3. Dispatch `osrm-backend.yml` on the tag. That run builds wheels + sdist
+3. The tag push triggers `osrm-backend.yml`. That run builds wheels + sdist
    via `cibuildwheel` and uploads them as `wheels-*` artifacts.
-4. Wait for the dispatched CI run to finish with conclusion `success`.
+4. Wait for the CI run on the tag's commit to finish with conclusion `success`.
 5. Run the `publish` job: download every `wheels-*` artifact into `dist/`,
    publish to PyPI via trusted publisher (OIDC), then `npm publish`.
 
@@ -315,8 +337,8 @@ After the run finishes, check:
 
 - Tag `v<version>` exists and the GitHub Release is published.
 - [pypi.org/project/osrm-bindings](https://pypi.org/project/osrm-bindings/) shows
-  the new version with an sdist and three platform wheels (manylinux x86_64,
-  macOS x86_64, win_amd64).
+  the new version with an sdist and four platform wheels (manylinux x86_64,
+  manylinux aarch64, macOS arm64, win_amd64).
 - [npmjs.com/package/@project-osrm/osrm](https://www.npmjs.com/package/@project-osrm/osrm)
   shows the matching version.
 

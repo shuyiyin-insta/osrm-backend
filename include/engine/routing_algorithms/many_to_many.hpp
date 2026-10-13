@@ -22,6 +22,9 @@ struct NodeBucket
     EdgeWeight weight;
     EdgeDuration duration;
     EdgeDistance distance;
+    //! How much of @c weight is the walk into an open area rather than travel through the
+    //! graph; see ManyToManyHeapData::approach, which this is copied from.
+    EdgeWeight approach;
 
     NodeBucket(NodeID middle_node,
                NodeID parent_node,
@@ -29,9 +32,11 @@ struct NodeBucket
                unsigned column_index,
                EdgeWeight weight,
                EdgeDuration duration,
-               EdgeDistance distance)
+               EdgeDistance distance,
+               EdgeWeight approach = EdgeWeight{0})
         : middle_node(middle_node), parent_node(parent_node), column_index(column_index),
-          from_clique_arc(from_clique_arc), weight(weight), duration(duration), distance(distance)
+          from_clique_arc(from_clique_arc), weight(weight), duration(duration), distance(distance),
+          approach(approach)
     {
     }
 
@@ -40,30 +45,26 @@ struct NodeBucket
                unsigned column_index,
                EdgeWeight weight,
                EdgeDuration duration,
-               EdgeDistance distance)
+               EdgeDistance distance,
+               EdgeWeight approach = EdgeWeight{0})
         : middle_node(middle_node), parent_node(parent_node), column_index(column_index),
-          from_clique_arc(false), weight(weight), duration(duration), distance(distance)
+          from_clique_arc(false), weight(weight), duration(duration), distance(distance),
+          approach(approach)
     {
     }
 
     // partial order comparison
     bool operator<(const NodeBucket &rhs) const
-    {
-        return std::tie(middle_node, column_index) < std::tie(rhs.middle_node, rhs.column_index);
-    }
+    { return std::tie(middle_node, column_index) < std::tie(rhs.middle_node, rhs.column_index); }
 
     // functor for equal_range
     struct Compare
     {
         bool operator()(const NodeBucket &lhs, const NodeID &rhs) const
-        {
-            return lhs.middle_node < rhs;
-        }
+        { return lhs.middle_node < rhs; }
 
         bool operator()(const NodeID &lhs, const NodeBucket &rhs) const
-        {
-            return lhs < rhs.middle_node;
-        }
+        { return lhs < rhs.middle_node; }
     };
 
     // functor for equal_range
@@ -71,17 +72,13 @@ struct NodeBucket
     {
         unsigned column_idx;
 
-        ColumnCompare(unsigned column_idx) : column_idx(column_idx){};
+        ColumnCompare(unsigned column_idx) : column_idx(column_idx) {};
 
         bool operator()(const NodeBucket &lhs, const NodeID &rhs) const // lowerbound
-        {
-            return std::tie(lhs.middle_node, lhs.column_index) < std::tie(rhs, column_idx);
-        }
+        { return std::tie(lhs.middle_node, lhs.column_index) < std::tie(rhs, column_idx); }
 
         bool operator()(const NodeID &lhs, const NodeBucket &rhs) const // upperbound
-        {
-            return std::tie(lhs, column_idx) < std::tie(rhs.middle_node, rhs.column_index);
-        }
+        { return std::tie(lhs, column_idx) < std::tie(rhs.middle_node, rhs.column_index); }
     };
 };
 } // namespace

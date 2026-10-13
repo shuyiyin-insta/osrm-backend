@@ -51,8 +51,9 @@ class Engine final : public EngineInterface
                        config.max_alternatives,
                        config.default_radius),                                      //
           table_plugin(config.max_locations_distance_table, config.default_radius), //
-          nearest_plugin(config.max_results_nearest, config.default_radius),        //
-          trip_plugin(config.max_locations_trip, config.default_radius),            //
+          nearest_plugin(
+              config.max_results_nearest, config.max_locations_nearest, config.default_radius), //
+          trip_plugin(config.max_locations_trip, config.default_radius),                        //
           match_plugin(config.max_locations_map_matching,
                        config.max_radius_map_matching,
                        config.default_radius), //
@@ -93,34 +94,22 @@ class Engine final : public EngineInterface
     virtual ~Engine() override = default;
 
     Status Route(const api::RouteParameters &params, api::ResultT &result) const override final
-    {
-        return route_plugin.HandleRequest(GetAlgorithms(params), params, result);
-    }
+    { return route_plugin.HandleRequest(GetAlgorithms(params), params, result); }
 
     Status Table(const api::TableParameters &params, api::ResultT &result) const override final
-    {
-        return table_plugin.HandleRequest(GetAlgorithms(params), params, result);
-    }
+    { return table_plugin.HandleRequest(GetAlgorithms(params), params, result); }
 
     Status Nearest(const api::NearestParameters &params, api::ResultT &result) const override final
-    {
-        return nearest_plugin.HandleRequest(GetAlgorithms(params), params, result);
-    }
+    { return nearest_plugin.HandleRequest(GetAlgorithms(params), params, result); }
 
     Status Trip(const api::TripParameters &params, api::ResultT &result) const override final
-    {
-        return trip_plugin.HandleRequest(GetAlgorithms(params), params, result);
-    }
+    { return trip_plugin.HandleRequest(GetAlgorithms(params), params, result); }
 
     Status Match(const api::MatchParameters &params, api::ResultT &result) const override final
-    {
-        return match_plugin.HandleRequest(GetAlgorithms(params), params, result);
-    }
+    { return match_plugin.HandleRequest(GetAlgorithms(params), params, result); }
 
     Status Tile(const api::TileParameters &params, api::ResultT &result) const override final
-    {
-        return tile_plugin.HandleRequest(GetAlgorithms(params), params, result);
-    }
+    { return tile_plugin.HandleRequest(GetAlgorithms(params), params, result); }
 
     Status Isochrone(const api::IsochroneParameters &params, api::ResultT &result) const override final
     {
@@ -129,9 +118,7 @@ class Engine final : public EngineInterface
 
   private:
     template <typename ParametersT> auto GetAlgorithms(const ParametersT &params) const
-    {
-        return RoutingAlgorithms<Algorithm>{heaps, facade_provider->Get(params)};
-    }
+    { return RoutingAlgorithms<Algorithm>{heaps, facade_provider->Get(params)}; }
     std::unique_ptr<DataFacadeProvider<Algorithm>> facade_provider;
     mutable SearchEngineData<Algorithm> heaps;
 

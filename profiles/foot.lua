@@ -1,14 +1,34 @@
 -- Foot profile
 
-api_version = 2
+api_version = 4
 
 Set = require('lib/set')
 Sequence = require('lib/sequence')
 Handlers = require("lib/way_handlers")
 find_access_tag = require("lib/access").find_access_tag
 
+-- Walking paths across the interior of open areas such as plazas and squares.
+-- Off by default: it makes extraction slower and the generated ways are
+-- synthetic, so it is opted into rather than assumed. Set this to true, or set
+-- the global before requiring this profile the way profiles/foot_area.lua does.
+-- See docs/areas.md.
+local enable_area_meshing = enable_area_meshing or false
+
+-- How much of a plaza's outline is shape and how much is drawing. A vertex whose
+-- triangle with its two neighbours covers less than this many square metres is
+-- dropped at extraction, by Visvalingam-Whyatt. An OSM plaza is drawn to be looked
+-- at -- Ile-de-France has one with a node every 30 cm -- and every vertex is paid
+-- for again on each query that snaps into the area. Entry points are never dropped.
+-- Set to 0 to keep the outline exactly as drawn. See docs/areas.md.
+local area_simplify_threshold = area_simplify_threshold or 1.0
+
 function setup()
   local walking_speed = 5
+
+  if enable_area_meshing then
+    area_manager:init('visgraph+dijkstra')
+  end
+
   return {
     properties = {
       weight_name                   = 'duration',
@@ -20,6 +40,7 @@ function setup()
       use_turn_restrictions         = false,
       -- preserve short road crossings for pedestrian safety analysis
       max_collapse_distance         = 10,
+      area_simplify_threshold       = enable_area_meshing and area_simplify_threshold or 0,
     },
 
     default_mode            = mode.walking,
@@ -139,7 +160,7 @@ function setup()
   }
 end
 
-function process_node(profile, node, result)
+function process_node(profile, node, result, relations)
   -- parse access and barrier tags
   local access = find_access_tag(node, profile.access_tags_hierarchy)
   if access then
@@ -203,7 +224,7 @@ local function handle_sidewalk_separate(profile, way, result, data)
 end
 
 -- main entry point for processsing a way
-function process_way(profile, way, result)
+function process_way(profile, way, result, relations)
   -- the intial filtering of ways based on presence of tags
   -- affects processing times significantly, because all ways
   -- have to be checked.
@@ -233,6 +254,12 @@ function process_way(profile, way, result)
   -- of the prefetched tags to be present, ie. the data table
   -- cannot be empty
   if next(data) == nil then     -- is the data table empty?
+    return
+  end
+
+  -- Hand the area to the mesher instead of routing along its outline.
+  if enable_area_meshing and data.highway == 'pedestrian' and way:has_true_tag('area') then
+    area_manager:way(way)
     return
   end
 
@@ -288,10 +315,18 @@ function process_way(profile, way, result)
   WayHandlers.run(profile, way, result, data, handlers)
 end
 
+-- Plazas mapped as multipolygon relations rather than closed ways.
+function process_relation(profile, relation)
+  if enable_area_meshing and relation:has_tag('type', 'multipolygon')
+     and relation:has_tag('highway', 'pedestrian') then
+    area_manager:relation(relation)
+  end
+end
+
 function process_turn (profile, turn)
   turn.duration = 0.
 
-  if turn.direction_modifier == direction_modifier.u_turn then
+  if turn.is_u_turn then
      turn.duration = turn.duration + profile.properties.u_turn_penalty
   end
 
@@ -310,5 +345,6 @@ return {
   setup = setup,
   process_way =  process_way,
   process_node = process_node,
-  process_turn = process_turn
+  process_turn = process_turn,
+  process_relation = process_relation
 }

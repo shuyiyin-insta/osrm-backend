@@ -42,9 +42,7 @@ BOOST_AUTO_TEST_SUITE(tile)
 using variant_type = std::variant<std::string, float, double, int64_t, uint64_t, bool>;
 
 std::string to_string(const protozero::data_view &view)
-{
-    return std::string{view.data(), view.size()};
-}
+{ return std::string{view.data(), view.size()}; }
 
 void validate_feature_layer(vtzero::layer layer)
 {
@@ -134,7 +132,7 @@ void validate_turn_layer(vtzero::layer layer)
                       layer.value_table().end(),
                       [](auto v) { return v.type() == vtzero::property_value_type::float_value; });
 
-    BOOST_CHECK_EQUAL(number_of_float_values, 73);
+    BOOST_CHECK_EQUAL(number_of_float_values, 90);
 }
 
 void validate_node_layer(vtzero::layer layer)
@@ -255,13 +253,13 @@ void test_tile_turns(const osrm::OSRM &osrm, bool use_string_only_api)
     // Verify that we got the expected turn penalties
     std::sort(actual_time_turn_penalties.begin(), actual_time_turn_penalties.end());
     const std::vector<float> expected_time_turn_penalties = {
-        0, 0, 0, 0, 0, 0, .1f, .1f, .3f, .4f, 1.2f, 1.9f, 5.3f, 5.5f, 5.8f, 7.1f, 7.2f, 7.2f};
+        0, 0, 0, 0, .1f, .1f, .3f, .4f, .6f, .6f, 2.7f, 3.5f, 5.3f, 5.5f, 5.8f, 9.1f, 9.2f, 9.2f};
     CHECK_EQUAL_RANGE(actual_time_turn_penalties, expected_time_turn_penalties);
 
     // Verify that we got the expected turn penalties
     std::sort(actual_weight_turn_penalties.begin(), actual_weight_turn_penalties.end());
     const std::vector<float> expected_weight_turn_penalties = {
-        0, 0, 0, 0, 0, 0, .1f, .1f, .3f, .4f, 1.2f, 1.9f, 5.3f, 5.5f, 5.8f, 7.1f, 7.2f, 7.2f};
+        0, 0, 0, 0, .1f, .1f, .3f, .4f, .6f, .6f, 2.7f, 3.5f, 5.3f, 5.5f, 5.8f, 9.1f, 9.2f, 9.2f};
     CHECK_EQUAL_RANGE(actual_weight_turn_penalties, expected_weight_turn_penalties);
 
     // Verify that we got the expected turn types
@@ -329,13 +327,9 @@ void test_tile_turns_ch(osrm::EngineConfig::Algorithm algorithm, bool use_string
     test_tile_turns(osrm, use_string_only_api);
 }
 BOOST_AUTO_TEST_CASE(test_tile_turns_ch_old_api)
-{
-    test_tile_turns_ch(osrm::EngineConfig::Algorithm::CH, true);
-}
+{ test_tile_turns_ch(osrm::EngineConfig::Algorithm::CH, true); }
 BOOST_AUTO_TEST_CASE(test_tile_turns_ch_new_api)
-{
-    test_tile_turns_ch(osrm::EngineConfig::Algorithm::CH, false);
-}
+{ test_tile_turns_ch(osrm::EngineConfig::Algorithm::CH, false); }
 
 void test_tile_turns_mld(bool use_string_only_api)
 {
@@ -406,13 +400,9 @@ void test_tile_speeds_ch(osrm::EngineConfig::Algorithm algorithm, bool use_strin
     test_tile_speeds(osrm, use_string_only_api);
 }
 BOOST_AUTO_TEST_CASE(test_tile_speeds_ch_old_api)
-{
-    test_tile_speeds_ch(osrm::EngineConfig::Algorithm::CH, true);
-}
+{ test_tile_speeds_ch(osrm::EngineConfig::Algorithm::CH, true); }
 BOOST_AUTO_TEST_CASE(test_tile_speeds_ch_new_api)
-{
-    test_tile_speeds_ch(osrm::EngineConfig::Algorithm::CH, false);
-}
+{ test_tile_speeds_ch(osrm::EngineConfig::Algorithm::CH, false); }
 
 void test_tile_speeds_mld(bool use_string_only_api)
 {
@@ -467,13 +457,9 @@ void test_tile_nodes_ch(osrm::EngineConfig::Algorithm algorithm, bool use_string
     test_tile_nodes(osrm, use_string_only_api);
 }
 BOOST_AUTO_TEST_CASE(test_tile_node_ch_old_api)
-{
-    test_tile_nodes_ch(osrm::EngineConfig::Algorithm::CH, true);
-}
+{ test_tile_nodes_ch(osrm::EngineConfig::Algorithm::CH, true); }
 BOOST_AUTO_TEST_CASE(test_tile_node_ch_new_api)
-{
-    test_tile_nodes_ch(osrm::EngineConfig::Algorithm::CH, false);
-}
+{ test_tile_nodes_ch(osrm::EngineConfig::Algorithm::CH, false); }
 
 void test_tile_nodes_mld(bool use_string_only_api)
 {

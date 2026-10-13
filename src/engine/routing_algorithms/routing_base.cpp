@@ -74,6 +74,14 @@ std::vector<NodeID> getBackwardForceNodes(const PhantomEndpointCandidates &endpo
     return res;
 }
 
+std::vector<NodeID> getForceStepNodes(const PhantomEndpointCandidates &endpoint_candidates)
+{
+    auto nodes = getForwardForceNodes(endpoint_candidates);
+    const auto backward = getBackwardForceNodes(endpoint_candidates);
+    nodes.insert(nodes.end(), backward.begin(), backward.end());
+    return nodes;
+}
+
 std::vector<NodeID> getBackwardForceNodes(const PhantomCandidatesToTarget &endpoint_candidates)
 {
     std::vector<NodeID> res;
@@ -90,22 +98,35 @@ std::vector<NodeID> getBackwardForceNodes(const PhantomCandidatesToTarget &endpo
 PhantomEndpoints endpointsFromCandidates(const PhantomEndpointCandidates &candidates,
                                          const std::vector<NodeID> &path)
 {
-    auto source_it = std::find_if(candidates.source_phantoms.begin(),
-                                  candidates.source_phantoms.end(),
-                                  [&path](const auto &source_phantom)
-                                  {
-                                      return path.front() == source_phantom.forward_segment_id.id ||
-                                             path.front() == source_phantom.reverse_segment_id.id;
-                                  });
+    auto source_it =
+        std::find_if(candidates.source_phantoms.begin(),
+                     candidates.source_phantoms.end(),
+                     [&path](const auto &source_phantom)
+                     {
+                         // A direction the search could not have set off in says
+                         // nothing about which candidate this path came from, and
+                         // that is per role: area snapping offers one candidate
+                         // per way leaving a vertex, and the two ends of one way
+                         // carry the same pair of ids; two candidates on one pair
+                         // may also differ only in the role they serve, one valid
+                         // as a source and the other as a target.
+                         return (source_phantom.IsValidForwardSource() &&
+                                 path.front() == source_phantom.forward_segment_id.id) ||
+                                (source_phantom.IsValidReverseSource() &&
+                                 path.front() == source_phantom.reverse_segment_id.id);
+                     });
     BOOST_ASSERT(source_it != candidates.source_phantoms.end());
 
-    auto target_it = std::find_if(candidates.target_phantoms.begin(),
-                                  candidates.target_phantoms.end(),
-                                  [&path](const auto &target_phantom)
-                                  {
-                                      return path.back() == target_phantom.forward_segment_id.id ||
-                                             path.back() == target_phantom.reverse_segment_id.id;
-                                  });
+    auto target_it =
+        std::find_if(candidates.target_phantoms.begin(),
+                     candidates.target_phantoms.end(),
+                     [&path](const auto &target_phantom)
+                     {
+                         return (target_phantom.IsValidForwardTarget() &&
+                                 path.back() == target_phantom.forward_segment_id.id) ||
+                                (target_phantom.IsValidReverseTarget() &&
+                                 path.back() == target_phantom.reverse_segment_id.id);
+                     });
     BOOST_ASSERT(target_it != candidates.target_phantoms.end());
 
     return PhantomEndpoints{*source_it, *target_it};

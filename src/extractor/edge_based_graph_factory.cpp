@@ -86,14 +86,10 @@ void EdgeBasedGraphFactory::GetEdgeBasedNodeDistances(
 }
 
 std::uint32_t EdgeBasedGraphFactory::GetConnectivityChecksum() const
-{
-    return m_connectivity_checksum;
-}
+{ return m_connectivity_checksum; }
 
 std::uint64_t EdgeBasedGraphFactory::GetNumberOfEdgeBasedNodes() const
-{
-    return m_number_of_edge_based_nodes;
-}
+{ return m_number_of_edge_based_nodes; }
 
 NBGToEBG EdgeBasedGraphFactory::InsertEdgeBasedNode(const NodeID node_u, const NodeID node_v)
 {
@@ -638,6 +634,7 @@ void EdgeBasedGraphFactory::GenerateEdgeExpandedEdges(
                 m_edge_based_node_container.GetAnnotation(edge_data1.annotation_data).travel_mode,
                 edge_data1.flags.road_classification.IsMotorwayClass(),
                 edge_data1.flags.road_classification.IsLinkClass(),
+                edge_data1.flags.roundabout || edge_data1.flags.circular,
                 edge_data1.flags.road_classification.GetNumberOfLanes(),
                 edge_data1.flags.highway_turn_classification,
                 edge_data1.flags.access_turn_classification,
@@ -650,6 +647,7 @@ void EdgeBasedGraphFactory::GenerateEdgeExpandedEdges(
                 m_edge_based_node_container.GetAnnotation(edge_data2.annotation_data).travel_mode,
                 edge_data2.flags.road_classification.IsMotorwayClass(),
                 edge_data2.flags.road_classification.IsLinkClass(),
+                edge_data2.flags.roundabout || edge_data2.flags.circular,
                 edge_data2.flags.road_classification.GetNumberOfLanes(),
                 edge_data2.flags.highway_turn_classification,
                 edge_data2.flags.access_turn_classification,

@@ -101,7 +101,7 @@ jobs:
           'TMP=D:\Temp' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           'TEMP=D:\Temp' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - run: cmake --version
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: node --version
@@ -177,7 +177,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Run CIBuildWheel
         if: github.event_name != 'pull_request'
-        uses: pypa/cibuildwheel@v4.1.0
+        uses: pypa/cibuildwheel@v4.3.0
         with:
           output-dir: dist
         # The wheel-build CMAKE_ARGS (vcpkg toolchain + triplet) and the
@@ -194,11 +194,15 @@ jobs:
 
   format-taginfo-docs:
     if: github.repository == 'Project-OSRM/osrm-backend'
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      actions: write  # needed by actions/cache
+      pull-requests: write  # needed to post PR comments with instructions
     steps:
     - uses: actions/checkout@v7
     - name: Use Node.js
-      uses: actions/setup-node@v6
+      uses: actions/setup-node@v7
       with:
         node-version: latest
     - name: Enable Node.js cache
@@ -210,23 +214,113 @@ jobs:
           ${{ runner.os }}-node-
     - name: Prepare environment
       run: |
-        sudo apt-get update -y
-        sudo apt-get install -y clang-format-18
+        # sudo apt-get update -y
+        sudo apt-get install -y clang-format-22
         npm ci --ignore-scripts
-        clang-format-18 --version
-    - uses: actions/setup-python@v6
+        clang-format-22 --version
+    - uses: actions/setup-python@v7
       with:
         python-version: '3.12'
     - name: Run `pre-commit`
       uses: pre-commit/action@v3.0.1
-    - name: Run checks
+    - name: Validate taginfo
+      run: ./scripts/check_taginfo.py taginfo.json profiles/car.lua
+    # ---- code formatting ----
+    - name: Check code formatting
+      id: format
       run: |
-        ./scripts/check_taginfo.py taginfo.json profiles/car.lua
-        # Check that code formatting is up to date
-        ./scripts/format.sh && ./scripts/error_on_dirty.sh "Run './scripts/format.sh' locally and commit the changes."
-        # Check that API documentation is up to date with JSDoc comments in node_osrm.cpp
-        npm run docs && ./scripts/error_on_dirty.sh "Run 'npm run docs' locally and commit the changes."
-        npm audit --production
+        ./scripts/format.sh
+        if ! git diff --exit-code --quiet; then
+          echo "dirty=true" >> "$GITHUB_OUTPUT"
+          git diff > /tmp/formatting-fixes.patch
+          cat /tmp/formatting-fixes.patch
+        fi
+    - name: Upload formatting patch
+      if: steps.format.outputs.dirty == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: formatting-fixes
+        path: /tmp/formatting-fixes.patch
+        retention-days: 7
+    - name: Post formatting instructions on PR
+      if: steps.format.outputs.dirty == 'true' && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork
+      run: |
+        gh pr comment "${{ github.event.pull_request.number }}" --body "## :wrench: Code Formatting Required
+
+        \`./scripts/format.sh\` produced changes on this branch.
+
+        **Option 1 — Download and apply** [formatting-fixes.zip](https://nightly.link/${{ github.repository }}/actions/runs/${{ github.run_id }}/formatting-fixes.zip):
+        \`\`\`bash
+        curl -LO https://nightly.link/${{ github.repository }}/actions/runs/${{ github.run_id }}/formatting-fixes.zip
+        unzip formatting-fixes.zip
+        git apply formatting-fixes.patch
+        \`\`\`
+
+        **Option 2 — Run locally:**
+        \`\`\`bash
+        ./scripts/format.sh
+        \`\`\`
+        Then commit the changes."
+      env:
+        GH_TOKEN: ${{ github.token }}
+    - name: Stash formatting changes
+      if: steps.format.outputs.dirty == 'true'
+      run: git stash push --message "formatting changes"
+
+    # ---- api documentation ----
+    - name: Check API documentation
+      id: docs
+      run: |
+        npm run docs
+        if ! git diff --exit-code --quiet; then
+          echo "dirty=true" >> "$GITHUB_OUTPUT"
+          git diff > /tmp/docs-fixes.patch
+        fi
+    - name: Upload documentation patch
+      if: steps.docs.outputs.dirty == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: docs-fixes
+        path: /tmp/docs-fixes.patch
+        retention-days: 7
+    - name: Post documentation instructions on PR
+      if: steps.docs.outputs.dirty == 'true' && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork
+      run: |
+        gh pr comment "${{ github.event.pull_request.number }}" --body "## :memo: API Documentation Required
+
+        \`npm run docs\` produced changes on this branch.
+
+        **Option 1 — Download and apply** [docs-fixes.zip](https://nightly.link/${{ github.repository }}/actions/runs/${{ github.run_id }}/docs-fixes.zip):
+        \`\`\`bash
+        curl -LO https://nightly.link/${{ github.repository }}/actions/runs/${{ github.run_id }}/docs-fixes.zip
+        unzip docs-fixes.zip
+        git apply docs-fixes.patch
+        \`\`\`
+
+        **Option 2 — Run locally:**
+        \`\`\`bash
+        npm run docs
+        \`\`\`
+        Then commit the changes."
+      env:
+        GH_TOKEN: ${{ github.token }}
+    - name: Restore formatting changes
+      if: steps.format.outputs.dirty == 'true'
+      run: git stash pop
+
+    # ---- final checks ----
+    - name: Run npm audit
+      run: npm audit --production
+    - name: Fail on outstanding changes
+      if: steps.format.outputs.dirty == 'true' || steps.docs.outputs.dirty == 'true'
+      run: |
+        if [[ "${{ steps.format.outputs.dirty }}" == 'true' ]]; then
+          echo "::error title=Code formatting out of date::Run './scripts/format.sh' locally, or download formatting-fixes.zip from the workflow artifacts."
+        fi
+        if [[ "${{ steps.docs.outputs.dirty }}" == 'true' ]]; then
+          echo "::error title=API documentation out of date::Run 'npm run docs' locally, or download docs-fixes.zip from the workflow artifacts."
+        fi
+        exit 1
 
   docker-build-extract-test:
     strategy:
@@ -375,7 +469,6 @@ jobs:
             BUILD_TYPE: Release
             CCOMPILER: gcc-14
             CXXCOMPILER: g++-14
-            CXXFLAGS: '-Wno-array-bounds -Wno-uninitialized'
 
           - name: gcc-15-release
             continue-on-error: false
@@ -384,7 +477,6 @@ jobs:
             BUILD_TYPE: Release
             CCOMPILER: gcc-15
             CXXCOMPILER: g++-15
-            CXXFLAGS: '-Wno-array-bounds -Wno-uninitialized'
 
           - name: linux-release-bindings
             build_bindings: true
@@ -396,23 +488,15 @@ jobs:
             CXXCOMPILER: clang++-18
             NODE_PACKAGE_TESTS_ONLY: ON
 
-          - name: linux-arm64-release
+          - name: linux-arm64-release-bindings
+            build_bindings: true
             continue-on-error: false
             node: 24
-            runs-on: ubuntu-24.04-arm
+            runs-on: ubuntu-26.04-arm
             BUILD_TYPE: Release
             CCOMPILER: clang-18
             CXXCOMPILER: clang++-18
             ENABLE_LTO: OFF
-
-          - name: macos-26-x64-release
-            continue-on-error: true
-            node: 24
-            runs-on: macos-26-intel # x86_64
-            BUILD_TYPE: Release
-            CCOMPILER: clang
-            CXXCOMPILER: clang++
-            vcpkg_triplet: x64-osx
 
           - name: macos-26-arm64-release
             continue-on-error: true
@@ -423,17 +507,7 @@ jobs:
             CXXCOMPILER: clang++
             vcpkg_triplet: arm64-osx
 
-          # python & nodeJS release bindings — macos-15 for broad binary compatibility
-          - name: macos-15-x64-release-bindings
-            build_bindings: true
-            continue-on-error: true
-            node: 24
-            runs-on: macos-15-intel # x86_64
-            BUILD_TYPE: Release
-            CCOMPILER: clang
-            CXXCOMPILER: clang++
-            vcpkg_triplet: x64-osx
-
+          # python & nodeJS release bindings
           - name: macos-15-arm64-release-bindings
             build_bindings: true
             continue-on-error: true
@@ -479,7 +553,7 @@ jobs:
       - name: Build machine architecture
         run: uname -m
       - name: Use Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - name: Enable Node.js cache
@@ -614,7 +688,16 @@ jobs:
           fi
           popd
           ./scripts/ci/test_cli_parsing.sh -b "${OSRM_BUILD_DIR}"
-          npm test -- --parallel $JOBS
+
+          # Coverage counts accumulate into shared .gcda files, which concurrent
+          # osrm-routed processes clobber, so a parallel run reports a different
+          # number every time. Run the suite serially where it is measured. See
+          # codecov.yml.
+          if [[ "${ENABLE_COVERAGE}" == "ON" ]]; then
+            npm test
+          else
+            npm test -- --parallel $JOBS
+          fi
 
       - name: Generate coverage report
         if: ${{ matrix.ENABLE_COVERAGE == 'ON' }}
@@ -637,7 +720,7 @@ jobs:
 
       - name: Use Node 22
         if: ${{ matrix.NODE_PACKAGE_TESTS_ONLY == 'ON' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Run Node package tests on Node 22
@@ -647,7 +730,7 @@ jobs:
           npm run nodejs-tests
       - name: Use Node 24
         if: ${{ matrix.NODE_PACKAGE_TESTS_ONLY == 'ON' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
       - name: Run Node package tests on Node 24
@@ -657,7 +740,7 @@ jobs:
           npm run nodejs-tests
       - name: Use Node latest
         if: ${{ matrix.NODE_PACKAGE_TESTS_ONLY == 'ON' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: latest
       - name: Run Node package tests on Node-latest
@@ -694,7 +777,7 @@ jobs:
 
       - name: Set up Python
         if: ${{ env.BUILD_BINDINGS }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -711,7 +794,7 @@ jobs:
         run: echo "path=$(ls dist/*.tar.gz | head -n1)" >> "$GITHUB_OUTPUT"
 
       - name: Run cibuildwheel
-        uses: pypa/cibuildwheel@v4.1.0
+        uses: pypa/cibuildwheel@v4.3.0
         if: ${{ env.BUILD_BINDINGS }}
         with:
           # for linux build the wheel from the sdist

@@ -1,5 +1,6 @@
 #include "engine/plugins/viaroute.hpp"
 #include "engine/api/route_api.hpp"
+#include "engine/area_route.hpp"
 #include "engine/routing_algorithms.hpp"
 #include "engine/status.hpp"
 
@@ -131,6 +132,24 @@ Status ViaRoutePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorithm
 
     if (routes.routes[0].is_valid())
     {
+        // A leg that begins and ends on one plaza is a case the mesh answers badly, and
+        // the geodesic across the plaza is worked out from the polygon instead.  Done
+        // before the legs are collapsed, so that each leg is still one pair of the
+        // coordinates that were asked for.
+        std::vector<PhantomNodeCandidates *> waypoints;
+        waypoints.reserve(snapped_phantoms.size());
+        for (auto &candidates : snapped_phantoms)
+        {
+            waypoints.push_back(&candidates);
+        }
+        for (auto &route : routes.routes)
+        {
+            if (route.is_valid())
+            {
+                area::useGeodesicWhereShorter(facade, route, waypoints);
+            }
+        }
+
         auto collapse_legs = !route_parameters.waypoints.empty();
         if (collapse_legs)
         {
@@ -159,20 +178,20 @@ Status ViaRoutePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorithm
         const auto all_in_same_component =
             [](const std::vector<PhantomNodeCandidates> &waypoint_candidates)
         {
-            return std::any_of(waypoint_candidates.front().begin(),
-                               waypoint_candidates.front().end(),
-                               // For each of the first possible phantoms, check if all other
-                               // positions in the list have a phantom from the same component.
-                               [&](const PhantomNode &phantom)
-                               {
-                                   const auto component_id = phantom.component.id;
-                                   return std::all_of(
-                                       std::next(waypoint_candidates.begin()),
-                                       std::end(waypoint_candidates),
-                                       [component_id](const PhantomNodeCandidates &candidates) {
-                                           return candidatesHaveComponent(candidates, component_id);
-                                       });
-                               });
+            return std::any_of(
+                waypoint_candidates.front().begin(),
+                waypoint_candidates.front().end(),
+                // For each of the first possible phantoms, check if all other
+                // positions in the list have a phantom from the same component.
+                [&](const PhantomNode &phantom)
+                {
+                    const auto component_id = phantom.component.id;
+                    return std::all_of(
+                        std::next(waypoint_candidates.begin()),
+                        std::end(waypoint_candidates),
+                        [component_id](const PhantomNodeCandidates &candidates)
+                        { return candidatesHaveComponent(candidates, component_id); });
+                });
         };
 
         if (!all_in_same_component(snapped_phantoms))

@@ -176,6 +176,8 @@ struct RouteParameters : public BaseParameters
     std::optional<bool> continue_straight;
     std::vector<std::size_t> waypoints;
 
+    bool operator==(const RouteParameters &) const = default;
+
     bool IsValid() const
     {
         const auto coordinates_ok = coordinates.size() >= 2;
@@ -198,16 +200,17 @@ inline bool operator&(RouteParameters::AnnotationsType lhs, RouteParameters::Ann
 inline RouteParameters::AnnotationsType operator|(RouteParameters::AnnotationsType lhs,
                                                   RouteParameters::AnnotationsType rhs)
 {
-    return (RouteParameters::AnnotationsType)(
-        static_cast<std::underlying_type_t<RouteParameters::AnnotationsType>>(lhs) |
-        static_cast<std::underlying_type_t<RouteParameters::AnnotationsType>>(rhs));
+    return (
+        RouteParameters::
+            AnnotationsType)(static_cast<std::underlying_type_t<RouteParameters::AnnotationsType>>(
+                                 lhs) |
+                             static_cast<std::underlying_type_t<RouteParameters::AnnotationsType>>(
+                                 rhs));
 }
 
 inline RouteParameters::AnnotationsType &operator|=(RouteParameters::AnnotationsType &lhs,
                                                     RouteParameters::AnnotationsType rhs)
-{
-    return lhs = lhs | rhs;
-}
+{ return lhs = lhs | rhs; }
 } // namespace osrm::engine::api
 
 #endif

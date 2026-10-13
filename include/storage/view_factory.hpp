@@ -8,6 +8,7 @@
 
 #include "customizer/edge_based_graph.hpp"
 
+#include "extractor/area_routing_data.hpp"
 #include "extractor/class_data.hpp"
 #include "extractor/compressed_edge_container.hpp"
 #include "extractor/edge_based_edge.hpp"
@@ -41,9 +42,7 @@ namespace osrm::storage
 
 template <typename T>
 util::vector_view<T> make_vector_view(const SharedDataIndex &index, const std::string &name)
-{
-    return util::vector_view<T>(index.GetBlockPtr<T>(name), index.GetBlockEntries(name));
-}
+{ return util::vector_view<T>(index.GetBlockPtr<T>(name), index.GetBlockEntries(name)); }
 
 template <>
 inline util::vector_view<bool> make_vector_view(const SharedDataIndex &index,
@@ -77,9 +76,7 @@ inline auto make_string_table_view(const SharedDataIndex &index, const std::stri
 }
 
 inline auto make_lane_data_view(const SharedDataIndex &index, const std::string &name)
-{
-    return make_vector_view<util::guidance::LaneTupleIdPair>(index, name + "/data");
-}
+{ return make_vector_view<util::guidance::LaneTupleIdPair>(index, name + "/data"); }
 
 inline auto make_turn_lane_description_views(const SharedDataIndex &index, const std::string &name)
 {
@@ -162,9 +159,7 @@ inline auto make_segment_data_view(const SharedDataIndex &index, const std::stri
 }
 
 inline auto make_coordinates_view(const SharedDataIndex &index, const std::string &name)
-{
-    return make_vector_view<util::Coordinate>(index, name);
-}
+{ return make_vector_view<util::Coordinate>(index, name); }
 
 inline auto make_osm_ids_view(const SharedDataIndex &index, const std::string &name)
 {
@@ -179,14 +174,10 @@ inline auto make_nbn_data_view(const SharedDataIndex &index, const std::string &
 }
 
 inline auto make_turn_weight_view(const SharedDataIndex &index, const std::string &name)
-{
-    return make_vector_view<TurnPenalty>(index, name + "/weight");
-}
+{ return make_vector_view<TurnPenalty>(index, name + "/weight"); }
 
 inline auto make_turn_duration_view(const SharedDataIndex &index, const std::string &name)
-{
-    return make_vector_view<TurnPenalty>(index, name + "/duration");
-}
+{ return make_vector_view<TurnPenalty>(index, name + "/duration"); }
 
 inline auto make_search_tree_view(const SharedDataIndex &index, const std::string &name)
 {
@@ -199,6 +190,50 @@ inline auto make_search_tree_view(const SharedDataIndex &index, const std::strin
         make_vector_view<std::uint64_t>(index, name + "/search_tree_level_starts");
 
     const auto coordinates = make_coordinates_view(index, "/common/nbn_data/coordinates");
+
+    const char *path = index.template GetBlockPtr<char>(name + "/file_index_path");
+
+    if (!std::filesystem::exists(std::filesystem::path{path}))
+    {
+        throw util::exception("Could not load " + std::string(path) + "Does the leaf file exist?" +
+                              SOURCE_REF);
+    }
+
+    return util::StaticRTree<RTreeLeaf, storage::Ownership::View>{
+        search_tree, rtree_level_starts, path, coordinates};
+}
+
+/**
+ * @brief The polygons of the meshed open areas: every ring flattened, outer first.
+ *
+ * Returns the areas, the bounding-box corners the area r-tree indexes, the vertices, and
+ * the length of each ring.
+ */
+inline auto make_open_areas_view(const SharedDataIndex &index, const std::string &name)
+{
+    return std::make_tuple(make_vector_view<extractor::AreaPolygonSegment>(index, name + "/areas"),
+                           make_coordinates_view(index, name + "/bbox_corners"),
+                           make_coordinates_view(index, name + "/vertices"),
+                           make_vector_view<std::uint32_t>(index, name + "/ring_lengths"));
+}
+
+/**
+ * @brief The r-tree that finds the open area a coordinate falls into.
+ *
+ * It indexes the bounding-box corner list that belongs to the areas, not the coordinates
+ * the rest of the engine uses -- see extractor::AreaPolygonSegment.
+ */
+inline auto make_open_area_tree_view(const SharedDataIndex &index, const std::string &name)
+{
+    using RTreeLeaf = extractor::AreaPolygonSegment;
+    using RTreeNode = util::StaticRTree<RTreeLeaf, storage::Ownership::View>::TreeNode;
+
+    const auto search_tree = make_vector_view<RTreeNode>(index, name + "/search_tree");
+
+    const auto rtree_level_starts =
+        make_vector_view<std::uint64_t>(index, name + "/search_tree_level_starts");
+
+    const auto coordinates = make_coordinates_view(index, "/common/open_areas/bbox_corners");
 
     const char *path = index.template GetBlockPtr<char>(name + "/file_index_path");
 
@@ -228,9 +263,7 @@ inline auto make_intersection_bearings_view(const SharedDataIndex &index, const 
 }
 
 inline auto make_entry_classes_view(const SharedDataIndex &index, const std::string &name)
-{
-    return make_vector_view<util::guidance::EntryClass>(index, name);
-}
+{ return make_vector_view<util::guidance::EntryClass>(index, name); }
 
 inline auto make_contracted_metric_view(const SharedDataIndex &index, const std::string &name)
 {
@@ -260,9 +293,7 @@ inline auto make_partition_view(const SharedDataIndex &index, const std::string 
 }
 
 inline auto make_timestamp_view(const SharedDataIndex &index, const std::string &name)
-{
-    return std::string_view(index.GetBlockPtr<char>(name), index.GetBlockEntries(name));
-}
+{ return std::string_view(index.GetBlockPtr<char>(name), index.GetBlockEntries(name)); }
 
 inline auto make_cell_storage_view(const SharedDataIndex &index, const std::string &name)
 {

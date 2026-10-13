@@ -5,6 +5,8 @@
 #include "contractor/contractor_search.hpp"
 #include "contractor/graph_contractor_adaptors.hpp"
 #include "contractor/query_edge.hpp"
+#include "util/exception.hpp"
+#include "util/exception_utils.hpp"
 #include "util/integer_range.hpp"
 #include "util/log.hpp"
 #include "util/percent.hpp"
@@ -26,6 +28,7 @@
 #include <cstddef>
 #include <iomanip>
 #include <limits>
+#include <string>
 #include <vector>
 
 #define SELF_LOOPS
@@ -142,6 +145,17 @@ struct ContractionStats
     int edges_added_count{};
     int original_edges_deleted_count{};
     int original_edges_added_count{};
+};
+
+/** Duplicate accounting for InsertEdges(). Only written from its serial insertion loop;
+ *  the totals accumulate over all rounds of one contractGraph() call. */
+struct InsertEdgeStats
+{
+    // std::size_t, not int as in ContractionStats: a single continental-scale
+    // contraction appends on the order of 7e8 edges.
+    std::size_t appended_count{};         // no duplicate existed, edge inserted
+    std::size_t updated_in_place_count{}; // duplicate existed, smaller weight written
+    std::size_t dropped_count{};          // duplicate existed, candidate not better
 };
 
 using ThreadData = tbb::enumerable_thread_specific<ContractorHeap>;
@@ -403,24 +417,83 @@ void PostProcess(ContractorGraph &graph, const NodeID v, ContractorNodeData &nod
 }
 
 /**
+ * @brief Find an existing shortcut that duplicates a candidate edge.
+ *
+ * The contractor stores each logical shortcut u->w as a forward edge at u and a
+ * backward copy at w, so a node pair legitimately carries one edge per direction;
+ * only a shortcut with identical direction flags duplicates the candidate.
+ * Non-shortcut edges are never considered: their id is an original-edge id, not
+ * a middle node, so they cannot be updated in place. The same restriction holds
+ * for the candidate (asserted): contraction only ever generates shortcuts, and
+ * updating a shortcut in place from a non-shortcut candidate would turn its
+ * middle node into an original-edge id.
+ *
+ * @param graph
+ * @param edge the candidate edge
+ * @return the duplicate's edge id, or SPECIAL_EDGEID
+ */
+EdgeID FindDuplicateShortcut(const ContractorGraph &graph, const ContractorEdge &edge)
+{
+    BOOST_ASSERT(edge.data.shortcut);
+    for (const auto e : graph.GetAdjacentEdgeRange(edge.source))
+    {
+        if (graph.GetTarget(e) != edge.target)
+        {
+            continue;
+        }
+        const ContractorEdgeData &data = graph.GetEdgeData(e);
+        if (data.shortcut && data.forward == edge.data.forward &&
+            data.backward == edge.data.backward)
+        {
+            return e;
+        }
+    }
+    return SPECIAL_EDGEID;
+}
+
+/**
  * @brief Inserts the edges produced by node contraction into the graph.
  *
  * - Algo 2: Insert E into Remaining graph
  *
+ * A shortcut for a node pair may already exist: several contractions in one batch
+ * can emit the same (source, target, direction) pair, and the bounded witness
+ * search of a later round can regenerate a shortcut instead of finding the copy
+ * an earlier round inserted. Keeping the smaller weight in the existing edge instead of
+ * appending a parallel one bounds the node degrees, which otherwise grow
+ * combinatorially on continental input.
+ *
  * This function is not thread-safe because edge insertion is not thread-safe even for
- * "independent" nodes (but edge erasure curiously is!). If the graph ever gets fixed to
- * be thread-safe, this function can use parallel execution too.
+ * "independent" nodes (but edge erasure curiously is!). The in-place duplicate update
+ * relies on the same serialization.
  *
  * @param graph
  * @param inserted_edges
  */
 
 void InsertEdges(ContractorGraph &graph,
-                 const tbb::concurrent_vector<ContractorEdge> &inserted_edges)
+                 const tbb::concurrent_vector<ContractorEdge> &inserted_edges,
+                 InsertEdgeStats &stats)
 {
     for (const ContractorEdge &edge : inserted_edges)
     {
+        const EdgeID existing = FindDuplicateShortcut(graph, edge);
+        if (existing != SPECIAL_EDGEID)
+        {
+            auto &data = graph.GetEdgeData(existing);
+            if (edge.data.weight < data.weight)
+            {
+                data = edge.data;
+                ++stats.updated_in_place_count;
+            }
+            else
+            {
+                ++stats.dropped_count;
+            }
+            continue;
+        }
         graph.InsertEdge(edge.source, edge.target, edge.data);
+        ++stats.appended_count;
     }
 }
 
@@ -512,12 +585,14 @@ bool IsNodeIndependent(const ContractorGraph &graph,
  * @param node_is_contractible_
  * @param edge_weights_
  * @param core_factor
+ * @param edge_list_compaction_threshold
  * @return std::vector<bool>
  */
 std::vector<bool> contractGraph(ContractorGraph &graph,
                                 std::vector<bool> node_is_uncontracted_,
                                 std::vector<bool> node_is_contractible_,
-                                double core_factor)
+                                double core_factor,
+                                std::size_t edge_list_compaction_threshold)
 {
     /** A heap kept in thread-local storage to avoid multiple recreations of it. */
     ContractorHeap heap_exemplar(HASH_MAP_CAPACITY);
@@ -539,6 +614,9 @@ std::vector<bool> contractGraph(ContractorGraph &graph,
     TIMER_DECLARE(update_core);
     TIMER_DECLARE(adjust_remaining);
     TIMER_DECLARE(renumber);
+    TIMER_DECLARE(compaction);
+
+    InsertEdgeStats insert_stats;
 
     // Update Priorities of all Nodes with Simulated Contractions
     util::Log() << "initializing node priorities...";
@@ -575,12 +653,51 @@ std::vector<bool> contractGraph(ContractorGraph &graph,
     util::UnbufferedLog log;
     util::Percent p(log, remaining_nodes.size());
 
+    // Inserting an edge grows the edge list by relocating the whole adjacency of a node to its
+    // end and dummying out the vacated slots. Nothing reclaims those slots while contracting, so
+    // on planet-sized input a quarter of the list went dead and its size crossed the 2^32 that a
+    // 32-bit edge index can address, all while the live edge count was still comfortably below
+    // it. Renumber() with an empty permutation compacts the list without renumbering nodes, so
+    // run it whenever the list approaches that ceiling. It rewrites every node's first edge and
+    // hence has to stay outside of the parallel sections below.
+    //
+    // The default trigger is anchored to the ceiling rather than set to a fixed size: a pass
+    // costs the same no matter how much it frees, since its work is proportional to the size of
+    // the list. A threshold sitting just above the live edge count therefore degenerates into
+    // compacting constantly and reclaiming next to nothing.
+
     // Algo 2: while Remaining Graph not Empty
     //
     // contract a chunk of nodes until a sufficient percentage of all nodes is
     // contracted
     while (remaining_nodes.size() > number_of_core_nodes)
     {
+        if (graph.GetEdgeCapacity() >= edge_list_compaction_threshold)
+        {
+            const auto slots_before = graph.GetEdgeCapacity();
+            TIMER_START(compaction);
+            graph.Renumber(std::vector<NodeID>());
+            TIMER_STOP(compaction);
+            const auto slots_after = graph.GetEdgeCapacity();
+            util::Log() << "compacted edge list from " << slots_before << " to " << slots_after
+                        << " edges in " << TIMER_MSEC(compaction);
+
+            // Every remaining slot now holds a live edge, and the finished hierarchy has to fit
+            // those into the same index. If that alone is above the trigger, there is nothing
+            // left to reclaim and every later iteration would compact for nothing.
+            if (slots_after >= edge_list_compaction_threshold)
+            {
+                throw util::exception(
+                    "There are too many edges: " + std::to_string(slots_after) +
+                    " of them are live and cannot be compacted away, which leaves only " +
+                    std::to_string(EDGE_LIST_LIMIT - slots_after) + " of the " +
+                    std::to_string(EDGE_LIST_LIMIT) +
+                    " slots an edge index can address free. That is not enough headroom to keep "
+                    "contracting, so this graph has to be split into smaller parts" +
+                    SOURCE_REF);
+            }
+        }
+
         /** List of discovered independent nodes */
         tbb::concurrent_vector<NodeID> independent_nodes;
         /** List of new edges to insert into the graph */
@@ -649,7 +766,7 @@ std::vector<bool> contractGraph(ContractorGraph &graph,
         // Algo 2: Insert E into Remaining graph
         TIMER_START(insert_edges);
         tbb::parallel_sort(inserted_edges);
-        InsertEdges(graph, inserted_edges);
+        InsertEdges(graph, inserted_edges, insert_stats);
         TIMER_STOP(insert_edges);
 
         // Algo 2: Update Priority of Neighbors of I with Simulated Contractions
@@ -657,10 +774,10 @@ std::vector<bool> contractGraph(ContractorGraph &graph,
         TIMER_START(update_priorities);
         if (remaining_nodes.size() > number_of_core_nodes)
         {
-            tbb::parallel_for_each(independent_nodes,
-                                   [&](const NodeID v) {
-                                       UpdateNeighbourPriorities(graph, v, node_data, thread_data);
-                                   });
+            tbb::parallel_for_each(
+                independent_nodes,
+                [&](const NodeID v)
+                { UpdateNeighbourPriorities(graph, v, node_data, thread_data); });
         }
         TIMER_STOP(update_priorities);
 
@@ -677,6 +794,9 @@ std::vector<bool> contractGraph(ContractorGraph &graph,
     util::Log() << "nodes contracted in " << TIMER_MSEC(contract);
     util::Log() << "nodes post-processed in " << TIMER_MSEC(post_process);
     util::Log() << "edges inserted in " << TIMER_MSEC(insert_edges);
+    util::Log() << "edges appended: " << insert_stats.appended_count
+                << ", shortcut duplicates: " << insert_stats.updated_in_place_count
+                << " updated in place, " << insert_stats.dropped_count << " dropped";
     util::Log() << "node priorities updated in " << TIMER_MSEC(update_priorities);
     util::Log() << "core flags updated in " << TIMER_MSEC(update_core);
     util::Log() << "adjusted remaining nodes left in " << TIMER_MSEC(adjust_remaining);
@@ -733,12 +853,11 @@ GraphAndFilter contractExcludableGraph(ContractorGraph contractor_graph_,
         // Add all non-core edges to container
         {
             auto non_core_edges = toEdges<QueryEdge>(contractor_graph);
-            auto new_end = std::remove_if(non_core_edges.begin(),
-                                          non_core_edges.end(),
-                                          [&](const auto &edge) {
-                                              return is_shared_core[edge.source] &&
-                                                     is_shared_core[edge.target];
-                                          });
+            auto new_end = std::remove_if(
+                non_core_edges.begin(),
+                non_core_edges.end(),
+                [&](const auto &edge)
+                { return is_shared_core[edge.source] && is_shared_core[edge.target]; });
             non_core_edges.resize(new_end - non_core_edges.begin());
             edge_container.Insert(std::move(non_core_edges));
 

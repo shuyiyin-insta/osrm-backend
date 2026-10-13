@@ -327,6 +327,10 @@ find_package(RapidJSON CONFIG REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
 find_package(flatbuffers CONFIG REQUIRED)
 
+# Driving-side classifier. Compiled, not header-only: its wasm core is shipped
+# as transpiled C and built once by the overlay port.
+find_package(gauche CONFIG REQUIRED)
+
 # Generate flatbuffers C++ headers from .fbs schemas at build time.
 # This removes the need to commit pre-generated headers and pin the
 # flatbuffers version — any compatible flatc will regenerate them.
@@ -486,6 +490,16 @@ target_link_libraries(osrm-customize osrm_customize ${Boost_PROGRAM_OPTIONS_LIBR
 target_link_libraries(osrm-contract osrm_contract ${Boost_PROGRAM_OPTIONS_LIBRARY})
 target_link_libraries(osrm-routed osrm ${Boost_PROGRAM_OPTIONS_LIBRARY} ${OPTIONAL_SOCKET_LIBS} ${ZLIB_LIBRARY})
 
+# Lua C modules pulled in by a profile's require() are dlopen'ed at runtime and
+# resolve their lua_* symbols against the hosting executable. vcpkg links Lua
+# statically, which leaves those symbols out of the dynamic symbol table and
+# makes the load fail with "undefined symbol: lua_gettop". ENABLE_EXPORTS puts
+# them back (-rdynamic on ELF toolchains). Only these two binaries embed Lua.
+# See https://github.com/Project-OSRM/osrm-backend/issues/7700
+if(NOT MSVC)
+  set_target_properties(osrm-extract osrm-contract PROPERTIES ENABLE_EXPORTS ON)
+endif()
+
 set(EXTRACTOR_LIBRARIES
     ${BZIP2_LIBRARIES}
     ${BOOST_BASE_LIBRARIES}
@@ -495,6 +509,7 @@ set(EXTRACTOR_LIBRARIES
     ${OSMIUM_LIBRARIES}
     ${TBB_LIBRARIES}
     ${ZLIB_LIBRARY}
+    gauche::gauche_cpp
     ${MAYBE_COVERAGE_LIBRARIES})
 set(PARTITIONER_LIBRARIES
     ${BOOST_ENGINE_LIBRARIES}
